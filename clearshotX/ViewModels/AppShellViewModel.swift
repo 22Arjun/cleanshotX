@@ -15,17 +15,23 @@ final class AppShellViewModel: ObservableObject {
     private let screenCaptureService: ScreenCaptureService
     private let clipboardService: ClipboardService
     private let previewWindowManager: PreviewWindowManager
+    private let regionSelectionManager: RegionSelectionManager
+    private let windowSelectionManager: WindowSelectionManager
     private let alertPresenter: AlertPresenter
 
     init(
         screenCaptureService: ScreenCaptureService? = nil,
         clipboardService: ClipboardService? = nil,
         previewWindowManager: PreviewWindowManager? = nil,
+        regionSelectionManager: RegionSelectionManager? = nil,
+        windowSelectionManager: WindowSelectionManager? = nil,
         alertPresenter: AlertPresenter? = nil
     ) {
         self.screenCaptureService = screenCaptureService ?? ScreenCaptureService()
         self.clipboardService = clipboardService ?? ClipboardService()
         self.previewWindowManager = previewWindowManager ?? PreviewWindowManager()
+        self.regionSelectionManager = regionSelectionManager ?? RegionSelectionManager()
+        self.windowSelectionManager = windowSelectionManager ?? WindowSelectionManager()
         self.alertPresenter = alertPresenter ?? AlertPresenter()
     }
 
@@ -43,6 +49,58 @@ final class AppShellViewModel: ObservableObject {
 
             do {
                 let capture = try await screenCaptureService.captureFullScreen()
+                previewWindowManager.showPreview(for: capture, clipboardService: clipboardService)
+            } catch {
+                handleCaptureError(error)
+            }
+        }
+    }
+
+    func captureRegion() {
+        guard !isCapturing else {
+            return
+        }
+
+        isCapturing = true
+
+        Task {
+            defer {
+                isCapturing = false
+            }
+
+            guard let region = await regionSelectionManager.selectRegion() else {
+                return
+            }
+
+            do {
+                let capture = try await screenCaptureService.captureRegion(region)
+                previewWindowManager.showPreview(for: capture, clipboardService: clipboardService)
+            } catch {
+                handleCaptureError(error)
+            }
+        }
+    }
+
+    func captureWindow() {
+        guard !isCapturing else {
+            return
+        }
+
+        isCapturing = true
+
+        Task {
+            defer {
+                isCapturing = false
+            }
+
+            do {
+                let windows = try await screenCaptureService.availableWindows()
+
+                guard let window = await windowSelectionManager.selectWindow(from: windows) else {
+                    return
+                }
+
+                let capture = try await screenCaptureService.captureWindow(window)
                 previewWindowManager.showPreview(for: capture, clipboardService: clipboardService)
             } catch {
                 handleCaptureError(error)

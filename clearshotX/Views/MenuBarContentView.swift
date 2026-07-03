@@ -24,16 +24,18 @@ struct MenuBarContentView: View {
         Divider()
 
         Button {
+            viewModel.captureRegion()
         } label: {
             Label("Capture Region", systemImage: "selection.pin.in.out")
         }
-        .disabled(true)
+        .disabled(viewModel.isCapturing)
 
         Button {
+            viewModel.captureWindow()
         } label: {
             Label("Capture Window", systemImage: "macwindow")
         }
-        .disabled(true)
+        .disabled(viewModel.isCapturing)
 
         Divider()
 
