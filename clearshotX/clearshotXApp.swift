@@ -9,9 +9,13 @@ import SwiftUI
 
 @main
 struct clearshotXApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var viewModel = AppShellViewModel()
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        MenuBarExtra("ClearshotX", systemImage: "camera.viewfinder") {
+            MenuBarContentView(viewModel: viewModel)
         }
+        .menuBarExtraStyle(.menu)
     }
 }

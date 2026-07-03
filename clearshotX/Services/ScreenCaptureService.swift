@@ -23,7 +23,7 @@ enum ScreenCaptureServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .permissionDenied:
-            "Screen Recording permission is required before ClearshotX can capture the screen."
+            "Screen Recording permission is not active yet."
         case .noDisplayAvailable:
             "No display was available to capture."
         case .noImageReturned:
@@ -34,6 +34,15 @@ enum ScreenCaptureServiceError: LocalizedError {
             "Could not write the captured PNG to disk."
         case .appSupportDirectoryUnavailable:
             "Could not locate the app support directory."
+        }
+    }
+
+    var recoverySuggestion: String? {
+        switch self {
+        case .permissionDenied:
+            "Enable ClearshotX in System Settings > Privacy & Security > Screen & System Audio Recording, then quit and reopen ClearshotX. macOS usually does not apply this permission to an already-running app."
+        default:
+            nil
         }
     }
 }
