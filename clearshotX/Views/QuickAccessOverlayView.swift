@@ -20,6 +20,17 @@ struct QuickAccessOverlayView: View {
     @State private var isHovering = false
 
     var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Color.clear
+
+            thumbnailCard
+                .padding(.leading, 84)
+                .padding(.bottom, 132)
+        }
+        .frame(width: 348, height: 324)
+    }
+
+    private var thumbnailCard: some View {
         ZStack {
             thumbnail
 
@@ -29,14 +40,14 @@ struct QuickAccessOverlayView: View {
             }
         }
         .frame(width: 180, height: 120)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(.white.opacity(isHovering ? 0.24 : 0.14), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.10), radius: 34, x: 0, y: 22)
-        .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 12)
-        .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
+        .shadow(color: .black.opacity(0.10), radius: 48, x: 0, y: 29)
+        .shadow(color: .black.opacity(0.17), radius: 25, x: 0, y: 17)
+        .shadow(color: .black.opacity(0.14), radius: 4, x: 0, y: 2)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.14)) {
                 isHovering = hovering
@@ -51,7 +62,7 @@ struct QuickAccessOverlayView: View {
             .resizable()
             .scaledToFill()
             .frame(width: 180, height: 120)
-            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var controls: some View {

@@ -11,11 +11,22 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class QuickAccessOverlayManager {
-    private let panelSize = NSSize(width: 180, height: 120)
+    private let thumbnailSize = NSSize(width: 180, height: 120)
+    private let shadowLeftOutset: CGFloat = 84
+    private let shadowRightOutset: CGFloat = 84
+    private let shadowTopOutset: CGFloat = 72
+    private let shadowBottomOutset: CGFloat = 132
     private let screenLeftMargin: CGFloat = 20
     private let screenBottomMargin: CGFloat = 55
     private let slideDistance: CGFloat = 14
     private let dismissDelay: TimeInterval = 5
+
+    private var panelSize: NSSize {
+        NSSize(
+            width: thumbnailSize.width + shadowLeftOutset + shadowRightOutset,
+            height: thumbnailSize.height + shadowTopOutset + shadowBottomOutset
+        )
+    }
 
     private var panel: QuickAccessPanel?
     private var dismissWorkItem: DispatchWorkItem?
@@ -102,9 +113,7 @@ final class QuickAccessOverlayManager {
         let hostingView = TransparentHostingView(rootView: rootView)
         hostingView.frame = NSRect(origin: .zero, size: panelSize)
         hostingView.autoresizingMask = [.width, .height]
-        hostingView.layer?.cornerRadius = 12
-        hostingView.layer?.cornerCurve = .continuous
-        hostingView.layer?.masksToBounds = true
+        hostingView.layer?.masksToBounds = false
         return hostingView
     }
 
@@ -113,8 +122,8 @@ final class QuickAccessOverlayManager {
         let visibleFrame = screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
 
         return NSRect(
-            x: visibleFrame.minX + screenLeftMargin,
-            y: visibleFrame.minY + screenBottomMargin,
+            x: visibleFrame.minX + screenLeftMargin - shadowLeftOutset,
+            y: visibleFrame.minY + screenBottomMargin - shadowBottomOutset,
             width: panelSize.width,
             height: panelSize.height
         )
