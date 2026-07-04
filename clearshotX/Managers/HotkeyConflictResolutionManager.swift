@@ -231,6 +231,26 @@ final class HotkeyConflictResolutionManager {
         )
     }
 
+    #if DEBUG
+    func resetOnboardingForDevelopment(
+        captureFullScreen: @escaping Handler,
+        captureRegion: @escaping Handler
+    ) async {
+        logger.info("Resetting onboarding for development")
+        UserDefaults.standard.removeObject(forKey: UserDefaultsKey.hotkeyMode)
+        UserDefaults.standard.removeObject(forKey: UserDefaultsKey.keyboardShortcutSetupCompleted)
+        UserDefaults.standard.removeObject(forKey: UserDefaultsKey.keyboardShortcutSetupVersion)
+        UserDefaults.standard.removeObject(forKey: UserDefaultsKey.onboardingCompletedVersion)
+        UserDefaults.standard.removeObject(forKey: UserDefaultsKey.defaultShortcutSetupPending)
+
+        _ = registerIndependentHotkeys(
+            captureFullScreen: captureFullScreen,
+            captureRegion: captureRegion,
+            rememberChoice: false
+        )
+    }
+    #endif
+
     @discardableResult
     func openKeyboardShortcutSettings() -> Bool {
         logger.info("Opening System Settings Keyboard Shortcuts pane")

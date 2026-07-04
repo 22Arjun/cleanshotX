@@ -171,6 +171,23 @@ final class AppShellViewModel: ObservableObject {
         }
     }
 
+    #if DEBUG
+    func resetOnboardingForDevelopment() {
+        Task {
+            await hotkeyConflictResolutionManager.resetOnboardingForDevelopment(
+                captureFullScreen: { [weak self] in
+                    self?.captureFullScreen()
+                },
+                captureRegion: { [weak self] in
+                    self?.captureRegion()
+                }
+            )
+            activeHotkeyMode = hotkeyConflictResolutionManager.activeMode
+            showHotkeyResolutionFlow(context: .firstRun)
+        }
+    }
+    #endif
+
     private func configureGlobalHotkeysAfterLaunch() {
         if NSApp.isRunning {
             Task { @MainActor in

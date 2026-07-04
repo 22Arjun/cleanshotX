@@ -15,6 +15,8 @@ enum HotkeyOnboardingFlowContext {
 }
 
 enum HotkeyOnboardingScreen: String {
+    case welcome
+    case capturePreview
     case defaultScreenshotToolDecision
     case systemSettingsInstructions
     case nextOnboardingScreen
@@ -24,7 +26,7 @@ enum HotkeyOnboardingScreen: String {
 final class HotkeyOnboardingFlowViewModel: ObservableObject {
     typealias Handler = GlobalHotkeyService.Handler
 
-    @Published private(set) var screen: HotkeyOnboardingScreen = .defaultScreenshotToolDecision
+    @Published private(set) var screen: HotkeyOnboardingScreen
     @Published private(set) var inlineMessage: String?
     @Published private(set) var isWorking = false
 
@@ -48,6 +50,7 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
         onFinished: @escaping () -> Void
     ) {
         self.context = context
+        self.screen = context == .firstRun ? .welcome : .defaultScreenshotToolDecision
         self.hotkeyConflictResolutionManager = hotkeyConflictResolutionManager
         self.captureFullScreen = captureFullScreen
         self.captureRegion = captureRegion
@@ -55,10 +58,32 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
         self.onFinished = onFinished
     }
 
+    var visibleScreens: [HotkeyOnboardingScreen] {
+        switch context {
+        case .firstRun:
+            [.welcome, .capturePreview, .defaultScreenshotToolDecision, .nextOnboardingScreen]
+        case .settings:
+            [.defaultScreenshotToolDecision, .nextOnboardingScreen]
+        }
+    }
+
+    var currentStepIndex: Int {
+        if screen == .systemSettingsInstructions,
+           let shortcutStepIndex = visibleScreens.firstIndex(of: .defaultScreenshotToolDecision) {
+            return shortcutStepIndex
+        }
+
+        return visibleScreens.firstIndex(of: screen) ?? max(visibleScreens.count - 1, 0)
+    }
+
+    var stepCount: Int {
+        visibleScreens.count
+    }
+
     var nextScreenTitle: String {
         switch context {
         case .firstRun:
-            "Next onboarding screen"
+            "ClearshotX is ready"
         case .settings:
             "Keyboard shortcuts updated"
         }
@@ -67,7 +92,7 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
     var nextScreenSubtitle: String {
         switch context {
         case .firstRun:
-            "This is a placeholder for Screen E. The rest of onboarding can continue from here."
+            "Your screenshot shortcuts are set. ClearshotX is running quietly in the menu bar whenever you need it."
         case .settings:
             "ClearshotX will keep using the shortcut choice you just selected."
         }
@@ -80,6 +105,16 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
         case .settings:
             "Done"
         }
+    }
+
+    func continueFromWelcome() {
+        logger.info("User continued from welcome onboarding")
+        transition(to: .capturePreview)
+    }
+
+    func continueFromCapturePreview() {
+        logger.info("User continued from capture preview onboarding")
+        transition(to: .defaultScreenshotToolDecision)
     }
 
     func declineDefaultShortcuts() {

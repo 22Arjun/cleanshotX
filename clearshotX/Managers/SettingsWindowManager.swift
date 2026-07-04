@@ -10,7 +10,12 @@ import SwiftUI
 
 @MainActor
 final class SettingsWindowManager {
+    #if DEBUG
+    private let windowSize = NSSize(width: 520, height: 430)
+    #else
     private let windowSize = NSSize(width: 520, height: 360)
+    #endif
+
     private var window: NSWindow?
     private var windowDelegate: SettingsWindowCloseDelegate?
 

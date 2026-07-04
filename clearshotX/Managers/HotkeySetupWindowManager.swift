@@ -10,7 +10,7 @@ import SwiftUI
 
 @MainActor
 final class HotkeySetupWindowManager {
-    private let windowSize = NSSize(width: 640, height: 560)
+    private let windowSize = NSSize(width: 720, height: 620)
     private var window: NSWindow?
     private var windowDelegate: WindowCloseDelegate?
     private var viewModel: HotkeyOnboardingFlowViewModel?

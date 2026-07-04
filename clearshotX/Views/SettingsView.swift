@@ -7,6 +7,12 @@
 
 import SwiftUI
 
+#if DEBUG
+private let settingsWindowHeight: CGFloat = 430
+#else
+private let settingsWindowHeight: CGFloat = 360
+#endif
+
 struct SettingsView: View {
     @ObservedObject var viewModel: AppShellViewModel
 
@@ -51,10 +57,32 @@ struct SettingsView: View {
                 .controlSize(.regular)
             }
 
+            #if DEBUG
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Development", systemImage: "hammer")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .labelColor))
+
+                Button {
+                    viewModel.resetOnboardingForDevelopment()
+                } label: {
+                    Label("Reset Onboarding", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+
+                Text("Clears onboarding flags and opens the first-run flow.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+            }
+            #endif
+
             Spacer()
         }
         .padding(28)
-        .frame(width: 520, height: 360, alignment: .topLeading)
+        .frame(width: 520, height: settingsWindowHeight, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
