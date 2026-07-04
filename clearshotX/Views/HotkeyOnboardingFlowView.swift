@@ -27,6 +27,8 @@ struct HotkeyOnboardingFlowView: View {
                     systemSettingsInstructions
                 case .screenRecordingPermission:
                     screenRecordingPermissionScreen
+                case .firstCaptureMoment:
+                    firstCaptureMomentScreen
                 case .nextOnboardingScreen:
                     readyScreen
                 }
@@ -238,6 +240,51 @@ struct HotkeyOnboardingFlowView: View {
         )
     }
 
+    private var firstCaptureMomentScreen: some View {
+        OnboardingScreenLayout(
+            visual: firstCaptureMomentVisual,
+            title: viewModel.firstCaptureDidSucceed ? "There it is" : "Try your first capture",
+            subtitle: firstCaptureSubtitle,
+            inlineMessage: viewModel.inlineMessage,
+            shortcutStatuses: [],
+            footer: {
+                OnboardingFooter {
+                    if viewModel.firstCaptureDidSucceed {
+                        Button {
+                            viewModel.tryFirstCapture()
+                        } label: {
+                            Label("Try Again", systemImage: "camera.viewfinder")
+                        }
+                        .buttonStyle(OnboardingActionButtonStyle(kind: .secondary, width: 126))
+
+                        Button {
+                            viewModel.continueFromFirstCaptureMoment()
+                        } label: {
+                            Label("Continue", systemImage: "arrow.right")
+                        }
+                        .buttonStyle(OnboardingActionButtonStyle(kind: .primary, width: 132))
+                        .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button {
+                            viewModel.continueFromFirstCaptureMoment()
+                        } label: {
+                            Label("Continue", systemImage: "arrow.right")
+                        }
+                        .buttonStyle(OnboardingActionButtonStyle(kind: .secondary, width: 126))
+
+                        Button {
+                            viewModel.tryFirstCapture()
+                        } label: {
+                            Label("Try a Capture", systemImage: "camera.viewfinder")
+                        }
+                        .buttonStyle(OnboardingActionButtonStyle(kind: .primary, width: 152))
+                        .keyboardShortcut(.defaultAction)
+                    }
+                }
+            }
+        )
+    }
+
     private var readyScreen: some View {
         OnboardingScreenLayout(
             visual: readyVisual,
@@ -372,6 +419,20 @@ struct HotkeyOnboardingFlowView: View {
 
     private var screenRecordingPermissionVisual: some View {
         ScreenRecordingPermissionVisual(state: viewModel.screenRecordingPermissionState)
+    }
+
+    private var firstCaptureMomentVisual: some View {
+        FirstCaptureMomentVisual(success: viewModel.firstCaptureDidSucceed)
+    }
+
+    private var firstCaptureSubtitle: String {
+        let shortcut = viewModel.fullScreenShortcutLabel
+
+        if shortcut.isEmpty {
+            return "Click Try a Capture, or press your full-screen shortcut. ClearshotX will show the quick overlay right after the screenshot."
+        }
+
+        return "Click Try a Capture, or press \(shortcut). ClearshotX will show the quick overlay right after the screenshot."
     }
 
     private var readyVisual: some View {
@@ -772,6 +833,156 @@ private struct PermissionTrustRow: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
+    }
+}
+
+private struct FirstCaptureMomentVisual: View {
+    let success: Bool
+
+    var body: some View {
+        ZStack {
+            VisualPanel(width: 408, height: 258)
+
+            ZStack(alignment: .bottomLeading) {
+                VStack(spacing: 0) {
+                    HStack(spacing: 7) {
+                        Circle().fill(Color(nsColor: .systemRed)).frame(width: 8, height: 8)
+                        Circle().fill(Color(nsColor: .systemYellow)).frame(width: 8, height: 8)
+                        Circle().fill(Color(nsColor: .systemGreen)).frame(width: 8, height: 8)
+
+                        Spacer()
+
+                        Text("Capture")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: 34)
+                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.82))
+
+                    ZStack {
+                        LinearGradient(
+                            colors: [
+                                Color(nsColor: .systemBlue).opacity(0.16),
+                                Color(nsColor: .systemGreen).opacity(0.12),
+                                Color(nsColor: .textBackgroundColor).opacity(0.92)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+
+                        VStack(spacing: 10) {
+                            HStack(spacing: 10) {
+                                CaptureMomentWindow(width: 106, height: 64, title: "Browser")
+                                CaptureMomentWindow(width: 124, height: 78, title: "Notes")
+                            }
+
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(Color(nsColor: .separatorColor).opacity(0.38))
+                                .frame(width: 222, height: 9)
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color(nsColor: .separatorColor).opacity(0.58), lineWidth: 1)
+                )
+                .frame(width: 338, height: 190)
+
+                QuickOverlayPreview(success: success)
+                    .offset(x: 20, y: 24)
+            }
+            .frame(width: 408, height: 258)
+        }
+        .frame(width: 430, height: 280)
+    }
+}
+
+private struct CaptureMomentWindow: View {
+    let width: CGFloat
+    let height: CGFloat
+    let title: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 4) {
+                Circle().fill(Color(nsColor: .separatorColor).opacity(0.7)).frame(width: 5, height: 5)
+                Circle().fill(Color(nsColor: .separatorColor).opacity(0.52)).frame(width: 5, height: 5)
+            }
+
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(Color(nsColor: .separatorColor).opacity(0.45))
+                .frame(height: 7)
+
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(Color(nsColor: .separatorColor).opacity(0.28))
+                .frame(width: width * 0.58, height: 7)
+        }
+        .padding(10)
+        .frame(width: width, height: height)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.86), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
+
+private struct QuickOverlayPreview: View {
+    let success: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .textBackgroundColor))
+                .frame(width: 138, height: 92)
+                .shadow(color: .black.opacity(0.22), radius: 20, x: 0, y: 12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(.white.opacity(0.20), lineWidth: 1)
+                )
+
+            VStack(spacing: 7) {
+                Image(systemName: success ? "checkmark.circle.fill" : "viewfinder")
+                    .font(.system(size: 22, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Color(nsColor: success ? .systemGreen : .systemBlue))
+
+                HStack(spacing: 6) {
+                    CaptureMomentAction(icon: "doc.on.clipboard", title: "Copy")
+                    CaptureMomentAction(icon: "square.and.arrow.down", title: "Save")
+                    CaptureMomentAction(icon: "pencil", title: "Edit")
+                }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            Image(systemName: success ? "sparkles" : "cursorarrow.click")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Color(nsColor: success ? .systemGreen : .systemBlue))
+                .frame(width: 28, height: 28)
+                .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+                .offset(x: 8, y: -8)
+        }
+    }
+}
+
+private struct CaptureMomentAction: View {
+    let icon: String
+    let title: String
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color(nsColor: .labelColor))
+                .frame(width: 24, height: 20)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.82), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+
+            Text(title)
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+        }
     }
 }
 

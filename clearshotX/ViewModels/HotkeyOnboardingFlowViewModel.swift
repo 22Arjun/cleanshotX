@@ -20,6 +20,7 @@ enum HotkeyOnboardingScreen: String {
     case defaultScreenshotToolDecision
     case systemSettingsInstructions
     case screenRecordingPermission
+    case firstCaptureMoment
     case nextOnboardingScreen
 }
 
@@ -31,6 +32,7 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
     @Published private(set) var inlineMessage: String?
     @Published private(set) var screenshotShortcutStatuses: [MacScreenshotShortcutStatus] = []
     @Published private(set) var screenRecordingPermissionState: ScreenRecordingPermissionState = .notGranted
+    @Published private(set) var firstCaptureDidSucceed = false
     @Published private(set) var isWorking = false
 
     private let context: HotkeyOnboardingFlowContext
@@ -44,6 +46,7 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
         subsystem: Bundle.main.bundleIdentifier ?? "clearshotX",
         category: "HotkeyOnboarding"
     )
+    private var captureSucceededObserver: NSObjectProtocol?
 
     init(
         context: HotkeyOnboardingFlowContext,
@@ -62,12 +65,20 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
         self.captureRegion = captureRegion
         self.onHotkeyModeChanged = onHotkeyModeChanged
         self.onFinished = onFinished
+
+        observeCaptureSucceeded()
+    }
+
+    deinit {
+        if let captureSucceededObserver {
+            NotificationCenter.default.removeObserver(captureSucceededObserver)
+        }
     }
 
     var visibleScreens: [HotkeyOnboardingScreen] {
         switch context {
         case .firstRun:
-            [.welcome, .capturePreview, .defaultScreenshotToolDecision, .screenRecordingPermission, .nextOnboardingScreen]
+            [.welcome, .capturePreview, .defaultScreenshotToolDecision, .screenRecordingPermission, .firstCaptureMoment, .nextOnboardingScreen]
         case .settings:
             [.defaultScreenshotToolDecision, .nextOnboardingScreen]
         }
@@ -111,6 +122,14 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
         case .settings:
             "Done"
         }
+    }
+
+    var fullScreenShortcutLabel: String {
+        hotkeyConflictResolutionManager.shortcutLabel(for: .captureFullScreen)
+    }
+
+    var regionShortcutLabel: String {
+        hotkeyConflictResolutionManager.shortcutLabel(for: .captureRegion)
     }
 
     func continueFromWelcome() {
@@ -295,8 +314,19 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
                 return
             }
 
-            transition(to: .nextOnboardingScreen)
+            transitionAfterScreenRecordingPermission()
         }
+    }
+
+    func tryFirstCapture() {
+        logger.info("User started first capture moment from onboarding")
+        inlineMessage = "Watch for the floating thumbnail. Hover it to reveal Copy, Save, Edit, Pin, and Delete."
+        captureFullScreen()
+    }
+
+    func continueFromFirstCaptureMoment() {
+        logger.info("User continued from first capture moment; success observed: \(self.firstCaptureDidSucceed, privacy: .public)")
+        transition(to: .nextOnboardingScreen)
     }
 
     func finish() {
@@ -317,6 +347,11 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
                 screenRecordingPermissionState = await screenRecordingPermissionService.currentState()
             }
         }
+
+        if nextScreen == .firstCaptureMoment {
+            inlineMessage = nil
+            firstCaptureDidSucceed = false
+        }
     }
 
     private func transitionAfterHotkeySetup() {
@@ -325,6 +360,33 @@ final class HotkeyOnboardingFlowViewModel: ObservableObject {
             transition(to: .screenRecordingPermission)
         case .settings:
             transition(to: .nextOnboardingScreen)
+        }
+    }
+
+    private func transitionAfterScreenRecordingPermission() {
+        switch context {
+        case .firstRun:
+            transition(to: .firstCaptureMoment)
+        case .settings:
+            transition(to: .nextOnboardingScreen)
+        }
+    }
+
+    private func observeCaptureSucceeded() {
+        captureSucceededObserver = NotificationCenter.default.addObserver(
+            forName: .clearshotXCaptureSucceeded,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.screen == .firstCaptureMoment else {
+                    return
+                }
+
+                self.logger.info("First capture success observed during onboarding")
+                self.firstCaptureDidSucceed = true
+                self.inlineMessage = "Nice. That floating thumbnail is the quick overlay: copy, save, edit, pin, or delete without breaking your flow."
+            }
         }
     }
 }

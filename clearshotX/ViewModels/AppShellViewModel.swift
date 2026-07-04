@@ -8,6 +8,10 @@
 import AppKit
 import Combine
 
+extension Notification.Name {
+    static let clearshotXCaptureSucceeded = Notification.Name("ClearshotXCaptureSucceeded")
+}
+
 @MainActor
 final class AppShellViewModel: ObservableObject {
     @Published private(set) var isCapturing = false
@@ -307,5 +311,6 @@ final class AppShellViewModel: ObservableObject {
             clipboardService: clipboardService,
             previewWindowManager: previewWindowManager
         )
+        NotificationCenter.default.post(name: .clearshotXCaptureSucceeded, object: nil)
     }
 }
