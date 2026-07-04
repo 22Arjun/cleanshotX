@@ -8,9 +8,9 @@
 import SwiftUI
 
 #if DEBUG
-private let settingsWindowHeight: CGFloat = 430
+private let settingsWindowHeight: CGFloat = 500
 #else
-private let settingsWindowHeight: CGFloat = 360
+private let settingsWindowHeight: CGFloat = 430
 #endif
 
 struct SettingsView: View {
@@ -38,6 +38,37 @@ struct SettingsView: View {
                     Label("Set Default Screenshot Shortcuts", systemImage: "command")
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Capture Feedback", systemImage: "speaker.wave.2")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .labelColor))
+
+                Toggle(
+                    isOn: Binding(
+                        get: {
+                            viewModel.isCaptureSoundEnabled
+                        },
+                        set: { isEnabled in
+                            viewModel.setCaptureSoundEnabled(isEnabled)
+                        }
+                    )
+                ) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Screenshot capture sound")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Color(nsColor: .labelColor))
+
+                        Text(viewModel.isCaptureSoundEnabled ? "Play a subtle sound after every successful capture." : "Keep successful captures silent.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                    }
+                }
+                .toggleStyle(.switch)
                 .controlSize(.regular)
             }
 

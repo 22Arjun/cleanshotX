@@ -16,8 +16,10 @@ extension Notification.Name {
 final class AppShellViewModel: ObservableObject {
     @Published private(set) var isCapturing = false
     @Published private(set) var activeHotkeyMode: GlobalHotkeyMode = .preferred
+    @Published private(set) var isCaptureSoundEnabled: Bool
 
     private let screenCaptureService: ScreenCaptureService
+    private let captureSoundService: CaptureSoundService
     private let clipboardService: ClipboardService
     private let previewWindowManager: PreviewWindowManager
     private let quickAccessOverlayManager: QuickAccessOverlayManager
@@ -35,6 +37,7 @@ final class AppShellViewModel: ObservableObject {
 
     init(
         screenCaptureService: ScreenCaptureService? = nil,
+        captureSoundService: CaptureSoundService? = nil,
         clipboardService: ClipboardService? = nil,
         previewWindowManager: PreviewWindowManager? = nil,
         quickAccessOverlayManager: QuickAccessOverlayManager? = nil,
@@ -48,6 +51,7 @@ final class AppShellViewModel: ObservableObject {
         alertPresenter: AlertPresenter? = nil
     ) {
         self.screenCaptureService = screenCaptureService ?? ScreenCaptureService()
+        self.captureSoundService = captureSoundService ?? CaptureSoundService()
         self.clipboardService = clipboardService ?? ClipboardService()
         self.previewWindowManager = previewWindowManager ?? PreviewWindowManager()
         self.quickAccessOverlayManager = quickAccessOverlayManager ?? QuickAccessOverlayManager()
@@ -59,6 +63,7 @@ final class AppShellViewModel: ObservableObject {
         self.menuBarStatusItemManager = menuBarStatusItemManager ?? MenuBarStatusItemManager()
         self.menuBarReadyHintManager = menuBarReadyHintManager ?? MenuBarReadyHintManager()
         self.alertPresenter = alertPresenter ?? AlertPresenter()
+        self.isCaptureSoundEnabled = self.captureSoundService.isEnabled
 
         self.menuBarStatusItemManager.configure(viewModel: self)
         observeAppActivation()
@@ -162,6 +167,11 @@ final class AppShellViewModel: ObservableObject {
 
     func openSettings() {
         settingsWindowManager.show(viewModel: self)
+    }
+
+    func setCaptureSoundEnabled(_ isEnabled: Bool) {
+        captureSoundService.isEnabled = isEnabled
+        isCaptureSoundEnabled = isEnabled
     }
 
     func openDefaultShortcutSetupFromSettings() {
@@ -325,6 +335,7 @@ final class AppShellViewModel: ObservableObject {
     }
 
     private func showQuickAccessOverlay(for capture: CaptureResult) {
+        captureSoundService.playCaptureSoundIfEnabled()
         quickAccessOverlayManager.show(
             capture: capture,
             clipboardService: clipboardService,
