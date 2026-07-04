@@ -530,6 +530,9 @@ final class EditorViewModel: ObservableObject {
         case "h":
             selectTool(.highlight)
             return true
+        case "b":
+            selectTool(.blurPixelate)
+            return true
         default:
             return false
         }
@@ -582,7 +585,8 @@ final class EditorViewModel: ObservableObject {
             fillColor: .clear,
             lineWidth: selectedStrokeWidth,
             opacity: selectedOpacity,
-            fontSize: selectedTextSize
+            fontSize: selectedTextSize,
+            effectIntensity: selectedStrokeWidth
         )
     }
 

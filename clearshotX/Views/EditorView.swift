@@ -143,7 +143,7 @@ private struct EditorToolbarView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
                 .buttonStyle(EditorPaletteButtonStyle(isSelected: viewModel.isStrokeWidthSelected(width)))
-                .help("Stroke Width: \(Int(width))")
+                .help(viewModel.activeTool == .blurPixelate ? "Pixelate Strength: \(Int(width))" : "Stroke Width: \(Int(width))")
             }
         }
         .toolbarGroupChrome()
@@ -805,6 +805,7 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
             annotations: visibleAnnotations,
             draftAnnotation: draftAnnotationObject,
             selectedAnnotationID: selectedAnnotationID,
+            sourceImage: currentImage?.cgImage(forProposedRect: nil, context: nil, hints: nil),
             in: annotationContainerLayer,
             contentsScale: currentLayerScale,
             selectionHandleSize: max(8, 8 / imageDisplayScale)
@@ -896,7 +897,7 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
     }
 
     private var drawingToolIsActive: Bool {
-        activeTool == .arrow || activeTool == .rectangle || activeTool == .oval || activeTool == .highlight
+        activeTool == .arrow || activeTool == .rectangle || activeTool == .oval || activeTool == .highlight || activeTool == .blurPixelate
     }
 }
 
@@ -970,11 +971,13 @@ private extension View {
             keyboardShortcut("t", modifiers: [])
         case .highlight:
             keyboardShortcut("h", modifiers: [])
+        case .blurPixelate:
+            keyboardShortcut("b", modifiers: [])
         case .undo:
             keyboardShortcut("z", modifiers: [.command])
         case .redo:
             keyboardShortcut("z", modifiers: [.command, .shift])
-        case .blurPixelate, .copy, .save:
+        case .copy, .save:
             self
         }
     }

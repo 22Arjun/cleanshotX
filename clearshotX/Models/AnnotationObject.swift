@@ -36,6 +36,7 @@ enum AnnotationGeometry: Equatable {
     case oval(CGRect)
     case text(rect: CGRect, text: String)
     case highlight(CGRect)
+    case blurPixelate(CGRect)
 
     var bounds: CGRect {
         switch self {
@@ -46,7 +47,7 @@ enum AnnotationGeometry: Equatable {
                 width: abs(end.x - start.x),
                 height: abs(end.y - start.y)
             )
-        case let .rectangle(rect), let .oval(rect), let .highlight(rect):
+        case let .rectangle(rect), let .oval(rect), let .highlight(rect), let .blurPixelate(rect):
             return rect.standardizedForEditor
         case let .text(rect, _):
             return rect.standardizedForEditor
@@ -68,6 +69,8 @@ enum AnnotationGeometry: Equatable {
             return .text(rect: rect.offsetBy(dx: translation.width, dy: translation.height), text: text)
         case let .highlight(rect):
             return .highlight(rect.offsetBy(dx: translation.width, dy: translation.height))
+        case let .blurPixelate(rect):
+            return .blurPixelate(rect.offsetBy(dx: translation.width, dy: translation.height))
         }
     }
 
@@ -258,6 +261,49 @@ enum AnnotationGeometry: Equatable {
             case .startPoint, .endPoint:
                 return self
             }
+        case let .blurPixelate(rect):
+            let normalizedRect = rect.standardizedForEditor
+
+            switch handle {
+            case .topLeft:
+                return .blurPixelate(
+                    CGRect(
+                        x: point.x,
+                        y: point.y,
+                        width: normalizedRect.maxX - point.x,
+                        height: normalizedRect.maxY - point.y
+                    ).standardizedForEditor
+                )
+            case .topRight:
+                return .blurPixelate(
+                    CGRect(
+                        x: normalizedRect.minX,
+                        y: point.y,
+                        width: point.x - normalizedRect.minX,
+                        height: normalizedRect.maxY - point.y
+                    ).standardizedForEditor
+                )
+            case .bottomLeft:
+                return .blurPixelate(
+                    CGRect(
+                        x: point.x,
+                        y: normalizedRect.minY,
+                        width: normalizedRect.maxX - point.x,
+                        height: point.y - normalizedRect.minY
+                    ).standardizedForEditor
+                )
+            case .bottomRight:
+                return .blurPixelate(
+                    CGRect(
+                        x: normalizedRect.minX,
+                        y: normalizedRect.minY,
+                        width: point.x - normalizedRect.minX,
+                        height: point.y - normalizedRect.minY
+                    ).standardizedForEditor
+                )
+            case .startPoint, .endPoint:
+                return self
+            }
         }
     }
 }
@@ -268,6 +314,7 @@ struct AnnotationStyle: Equatable {
     var lineWidth: CGFloat = 3
     var opacity: CGFloat = 1
     var fontSize: CGFloat = 24
+    var effectIntensity: CGFloat = 4
 }
 
 struct AnnotationObject: Identifiable, Equatable {
@@ -355,6 +402,19 @@ struct AnnotationObject: Identifiable, Equatable {
             id: id,
             kind: .highlight,
             geometry: .highlight(rect.standardizedForEditor),
+            style: style
+        )
+    }
+
+    static func blurPixelate(
+        id: UUID = UUID(),
+        rect: CGRect,
+        style: AnnotationStyle
+    ) -> AnnotationObject {
+        AnnotationObject(
+            id: id,
+            kind: .blurPixelate,
+            geometry: .blurPixelate(rect.standardizedForEditor),
             style: style
         )
     }

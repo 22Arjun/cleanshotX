@@ -77,7 +77,17 @@ final class AnnotationInteractionService: AnnotationInteractionServicing {
                 ),
                 style: style
             )
-        case .text, .blurPixelate:
+        case .blurPixelate:
+            return AnnotationObject.blurPixelate(
+                rect: CGRect(
+                    x: startPoint.x,
+                    y: startPoint.y,
+                    width: endPoint.x - startPoint.x,
+                    height: endPoint.y - startPoint.y
+                ),
+                style: style
+            )
+        case .text:
             return nil
         }
     }
@@ -86,7 +96,7 @@ final class AnnotationInteractionService: AnnotationInteractionServicing {
         switch annotation.geometry {
         case let .arrow(start, end):
             return hypot(end.x - start.x, end.y - start.y) >= 8
-        case let .rectangle(rect), let .oval(rect), let .highlight(rect):
+        case let .rectangle(rect), let .oval(rect), let .highlight(rect), let .blurPixelate(rect):
             return rect.standardizedForEditor.width >= 8 && rect.standardizedForEditor.height >= 8
         case let .text(_, text):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -128,7 +138,9 @@ private extension [AnnotationObject] {
         let newestFirst = reversed()
 
         return newestFirst.filter { annotation in
-            annotation.kind != .highlight
+            annotation.kind != .highlight && annotation.kind != .blurPixelate
+        } + newestFirst.filter { annotation in
+            annotation.kind == .blurPixelate
         } + newestFirst.filter { annotation in
             annotation.kind == .highlight
         }
