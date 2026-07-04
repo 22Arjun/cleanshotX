@@ -38,6 +38,7 @@ private struct EditorToolbarView: View {
             toolButtonGroup(EditorToolbarAction.drawingTools)
             colorPalette
             strokeWidthPicker
+            textSizeMenu
             opacityMenu
             Spacer(minLength: 12)
             toolButtonGroup(EditorToolbarAction.historyCommands)
@@ -145,6 +146,37 @@ private struct EditorToolbarView: View {
                 .help("Stroke Width: \(Int(width))")
             }
         }
+        .toolbarGroupChrome()
+    }
+
+    private var textSizeMenu: some View {
+        Menu {
+            ForEach(EditorViewModel.textSizeOptions, id: \.self) { size in
+                Button {
+                    viewModel.setTextSize(size)
+                } label: {
+                    HStack {
+                        if viewModel.isTextSizeSelected(size) {
+                            Image(systemName: "checkmark")
+                        }
+                        Text("\(Int(size)) pt")
+                    }
+                }
+            }
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.clear)
+
+                Text("A")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .labelColor).opacity(0.88))
+            }
+            .frame(width: 34, height: 34)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .help("Text Size: \(Int(viewModel.selectedTextSize)) pt")
         .toolbarGroupChrome()
     }
 
@@ -290,7 +322,7 @@ private struct EditorCanvasView: NSViewRepresentable {
     }
 }
 
-private final class EditorCanvasNSView: NSView {
+private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
     private let imageContainerLayer = CALayer()
     private let imageLayer = CALayer()
     private let annotationContainerLayer = CALayer()
@@ -305,6 +337,9 @@ private final class EditorCanvasNSView: NSView {
     private var imageFrameInView: CGRect = .zero
     private var imageDisplayScale: CGFloat = 1
     private var trackingArea: NSTrackingArea?
+    private var activeTextView: AnnotationTextView?
+    private var activeTextAnnotationID: UUID?
+    private var isFinishingTextEditing = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -338,6 +373,7 @@ private final class EditorCanvasNSView: NSView {
     override func layout() {
         super.layout()
         layoutCanvasLayers()
+        updateActiveTextEditorFrame()
     }
 
     override func updateTrackingAreas() {
@@ -367,6 +403,10 @@ private final class EditorCanvasNSView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
 
+        if activeTextView != nil {
+            finishActiveTextEditing()
+        }
+
         guard let point = imagePoint(from: event, clamped: false),
               let viewModel
         else {
@@ -379,6 +419,11 @@ private final class EditorCanvasNSView: NSView {
             at: point,
             tolerance: hitTestTolerance
         )
+
+        if handleTextInteraction(at: point, hitResult: hitResult, event: event) {
+            return
+        }
+
         viewModel.beginCanvasInteraction(at: point, hitResult: hitResult)
         refreshFromViewModel()
     }
@@ -468,8 +513,200 @@ private final class EditorCanvasNSView: NSView {
         self.selectedAnnotationID = selectedAnnotationID
         self.activeTool = activeTool
         imageLayer.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        removeTextEditorIfAnnotationDisappeared()
         renderAnnotationLayers()
         needsLayout = true
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard notification.object as? NSTextView === activeTextView else {
+            return
+        }
+
+        resizeActiveTextEditorToFitContent()
+        syncActiveTextEditorToViewModel()
+    }
+
+    func textDidEndEditing(_ notification: Notification) {
+        guard notification.object as? NSTextView === activeTextView,
+              !isFinishingTextEditing
+        else {
+            return
+        }
+
+        finishActiveTextEditing()
+    }
+
+    private func handleTextInteraction(
+        at point: CGPoint,
+        hitResult: AnnotationHitResult,
+        event: NSEvent
+    ) -> Bool {
+        guard let viewModel else {
+            return false
+        }
+
+        if case let .annotation(annotationID) = hitResult,
+           event.clickCount >= 2,
+           viewModel.beginTextEditing(annotationID: annotationID) {
+            refreshFromViewModel()
+            beginTextEditor(for: annotationID)
+            return true
+        }
+
+        guard activeTool == .text else {
+            return false
+        }
+
+        switch hitResult {
+        case .resize:
+            return false
+        case let .annotation(annotationID):
+            guard viewModel.beginTextEditing(annotationID: annotationID) else {
+                return false
+            }
+
+            refreshFromViewModel()
+            beginTextEditor(for: annotationID)
+            return true
+        case .empty:
+            let annotationID = viewModel.beginTextAnnotation(at: point)
+            refreshFromViewModel()
+            beginTextEditor(for: annotationID)
+            return true
+        }
+    }
+
+    private func beginTextEditor(for annotationID: UUID) {
+        finishActiveTextEditing()
+
+        guard let viewModel,
+              let annotation = viewModel.textAnnotation(withID: annotationID),
+              case let .text(rect, text) = annotation.geometry
+        else {
+            return
+        }
+
+        let textView = AnnotationTextView(frame: viewRect(forImageRect: rect.standardizedForEditor))
+        textView.delegate = self
+        textView.string = text
+        textView.font = NSFont.systemFont(
+            ofSize: max(8, annotation.style.fontSize * imageDisplayScale),
+            weight: .semibold
+        )
+        textView.textColor = annotation.style.strokeColor.withAlphaComponent(annotation.style.opacity)
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.textContainerInset = NSSize(width: 4, height: 3)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: textView.bounds.width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.onCommit = { [weak self] in
+            self?.finishActiveTextEditing()
+        }
+        textView.wantsLayer = true
+        textView.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        textView.layer?.borderWidth = 1.5
+        textView.layer?.cornerRadius = 4
+
+        addSubview(textView)
+        activeTextView = textView
+        activeTextAnnotationID = annotationID
+        renderAnnotationLayers()
+        resizeActiveTextEditorToFitContent()
+        window?.makeFirstResponder(textView)
+
+        textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+    }
+
+    private func finishActiveTextEditing() {
+        guard let textView = activeTextView,
+              let annotationID = activeTextAnnotationID,
+              let viewModel
+        else {
+            return
+        }
+
+        isFinishingTextEditing = true
+        syncActiveTextEditorToViewModel()
+        textView.delegate = nil
+        textView.removeFromSuperview()
+        activeTextView = nil
+        activeTextAnnotationID = nil
+        viewModel.endTextEditing(annotationID: annotationID)
+        isFinishingTextEditing = false
+        refreshFromViewModel()
+        window?.makeFirstResponder(self)
+    }
+
+    private func removeTextEditorIfAnnotationDisappeared() {
+        guard let activeTextAnnotationID,
+              !annotationObjects.contains(where: { annotation in
+                  annotation.id == activeTextAnnotationID
+              })
+        else {
+            return
+        }
+
+        activeTextView?.delegate = nil
+        activeTextView?.removeFromSuperview()
+        activeTextView = nil
+        self.activeTextAnnotationID = nil
+    }
+
+    private func syncActiveTextEditorToViewModel() {
+        guard let textView = activeTextView,
+              let annotationID = activeTextAnnotationID,
+              imageDisplayScale > 0
+        else {
+            return
+        }
+
+        viewModel?.updateEditingText(
+            annotationID: annotationID,
+            text: textView.string,
+            rect: imageRect(forViewRect: textView.frame)
+        )
+    }
+
+    private func resizeActiveTextEditorToFitContent() {
+        guard let textView = activeTextView,
+              let textContainer = textView.textContainer,
+              let layoutManager = textView.layoutManager
+        else {
+            return
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let usedRect = layoutManager.usedRect(for: textContainer)
+        let targetHeight = ceil(
+            max(
+                36,
+                usedRect.height + textView.textContainerInset.height * 2 + 10
+            )
+        )
+        let maxHeight = max(36, imageFrameInView.maxY - textView.frame.minY)
+
+        var frame = textView.frame
+        frame.size.height = min(maxHeight, targetHeight)
+        textView.frame = frame
+        syncActiveTextEditorToViewModel()
+    }
+
+    private func updateActiveTextEditorFrame() {
+        guard let activeTextAnnotationID,
+              let annotation = viewModel?.textAnnotation(withID: activeTextAnnotationID),
+              case let .text(rect, _) = annotation.geometry
+        else {
+            return
+        }
+
+        activeTextView?.frame = viewRect(forImageRect: rect.standardizedForEditor)
     }
 
     private func setupLayers() {
@@ -555,12 +792,17 @@ private final class EditorCanvasNSView: NSView {
         selectedAnnotationID = viewModel.selectedAnnotationID
         activeTool = viewModel.activeTool
         renderAnnotationLayers()
+        updateActiveTextEditorFrame()
         cursor(for: nil).set()
     }
 
     private func renderAnnotationLayers() {
+        let visibleAnnotations = annotationObjects.filter { annotation in
+            annotation.id != activeTextAnnotationID
+        }
+
         annotationLayerRenderer.render(
-            annotations: annotationObjects,
+            annotations: visibleAnnotations,
             draftAnnotation: draftAnnotationObject,
             selectedAnnotationID: selectedAnnotationID,
             in: annotationContainerLayer,
@@ -609,25 +851,66 @@ private final class EditorCanvasNSView: NSView {
         return rawPoint.clamped(to: annotationContainerLayer.bounds)
     }
 
+    private func viewRect(forImageRect imageRect: CGRect) -> CGRect {
+        CGRect(
+            x: imageFrameInView.minX + imageRect.minX * imageDisplayScale,
+            y: imageFrameInView.minY + imageRect.minY * imageDisplayScale,
+            width: imageRect.width * imageDisplayScale,
+            height: imageRect.height * imageDisplayScale
+        )
+    }
+
+    private func imageRect(forViewRect viewRect: CGRect) -> CGRect {
+        CGRect(
+            x: (viewRect.minX - imageFrameInView.minX) / imageDisplayScale,
+            y: (viewRect.minY - imageFrameInView.minY) / imageDisplayScale,
+            width: viewRect.width / imageDisplayScale,
+            height: viewRect.height / imageDisplayScale
+        ).standardizedForEditor
+    }
+
     private func cursor(for imagePoint: CGPoint?) -> NSCursor {
         guard let imagePoint,
               let viewModel
         else {
-            return drawingToolIsActive ? .crosshair : .arrow
+            return activeTool == .text ? .iBeam : drawingToolIsActive ? .crosshair : .arrow
         }
 
         switch viewModel.hitTestAnnotation(at: imagePoint, tolerance: hitTestTolerance) {
         case .resize:
             return .crosshair
-        case .annotation:
+        case let .annotation(annotationID):
+            if activeTool == .text,
+               viewModel.textAnnotation(withID: annotationID) != nil {
+                return .iBeam
+            }
+
             return .openHand
         case .empty:
+            if activeTool == .text {
+                return .iBeam
+            }
+
             return drawingToolIsActive ? .crosshair : .arrow
         }
     }
 
     private var drawingToolIsActive: Bool {
         activeTool == .arrow || activeTool == .rectangle || activeTool == .oval
+    }
+}
+
+private final class AnnotationTextView: NSTextView {
+    var onCommit: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 ||
+            (event.keyCode == 36 && event.modifierFlags.contains(.command)) {
+            onCommit?()
+            return
+        }
+
+        super.keyDown(with: event)
     }
 }
 
@@ -683,11 +966,13 @@ private extension View {
             keyboardShortcut("r", modifiers: [])
         case .oval:
             keyboardShortcut("o", modifiers: [])
+        case .text:
+            keyboardShortcut("t", modifiers: [])
         case .undo:
             keyboardShortcut("z", modifiers: [.command])
         case .redo:
             keyboardShortcut("z", modifiers: [.command, .shift])
-        case .text, .highlight, .blurPixelate, .copy, .save:
+        case .highlight, .blurPixelate, .copy, .save:
             self
         }
     }

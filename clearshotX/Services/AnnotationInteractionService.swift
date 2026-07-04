@@ -78,6 +78,8 @@ final class AnnotationInteractionService: AnnotationInteractionServicing {
             return hypot(end.x - start.x, end.y - start.y) >= 8
         case let .rectangle(rect), let .oval(rect):
             return rect.standardizedForEditor.width >= 8 && rect.standardizedForEditor.height >= 8
+        case let .text(_, text):
+            return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 

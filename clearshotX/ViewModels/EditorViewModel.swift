@@ -170,6 +170,7 @@ final class EditorViewModel: ObservableObject {
     ]
 
     static let strokeWidthOptions: [CGFloat] = [2, 4, 6, 8]
+    static let textSizeOptions: [CGFloat] = [16, 24, 32, 44]
     static let opacityOptions: [CGFloat] = [1, 0.75, 0.5]
 
     let id = UUID()
@@ -182,12 +183,14 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var draftAnnotationObject: AnnotationObject?
     @Published private(set) var selectedStrokeColorID = "red"
     @Published private(set) var selectedStrokeWidth: CGFloat = 4
+    @Published private(set) var selectedTextSize: CGFloat = 24
     @Published private(set) var selectedOpacity: CGFloat = 1
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
 
     private let annotationInteractionService: AnnotationInteractionServicing
     private var activeDragSession: EditorDragSession?
+    private var textEditingInitialState: EditorHistoryState?
     private var undoStack: [EditorHistoryState] = []
     private var redoStack: [EditorHistoryState] = []
     private let historyLimit = 80
@@ -265,6 +268,15 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
+    func setTextSize(_ size: CGFloat) {
+        let previousState = currentHistoryState()
+        selectedTextSize = size
+
+        if applyActiveStyleToSelectedAnnotation(only: .text) {
+            recordUndoState(previousState)
+        }
+    }
+
     func setOpacity(_ opacity: CGFloat) {
         let previousState = currentHistoryState()
         selectedOpacity = opacity
@@ -282,8 +294,86 @@ final class EditorViewModel: ObservableObject {
         selectedStrokeWidth == width
     }
 
+    func isTextSizeSelected(_ size: CGFloat) -> Bool {
+        selectedTextSize == size
+    }
+
     func isOpacitySelected(_ opacity: CGFloat) -> Bool {
         selectedOpacity == opacity
+    }
+
+    @discardableResult
+    func beginTextAnnotation(at point: CGPoint) -> UUID {
+        let previousState = currentHistoryState()
+        let annotation = AnnotationObject.text(
+            rect: defaultTextRect(at: point),
+            text: "",
+            style: activeAnnotationStyle()
+        )
+
+        annotationObjects.append(annotation)
+        selectedAnnotationID = annotation.id
+        draftAnnotationObject = nil
+        activeDragSession = nil
+        textEditingInitialState = previousState
+        return annotation.id
+    }
+
+    @discardableResult
+    func beginTextEditing(annotationID: UUID) -> Bool {
+        guard annotation(withID: annotationID)?.kind == .text else {
+            return false
+        }
+
+        selectedAnnotationID = annotationID
+        draftAnnotationObject = nil
+        activeDragSession = nil
+        textEditingInitialState = currentHistoryState()
+        return true
+    }
+
+    func updateEditingText(annotationID: UUID, text: String, rect: CGRect) {
+        guard let annotation = annotation(withID: annotationID),
+              annotation.kind == .text
+        else {
+            return
+        }
+
+        updateAnnotation(
+            withID: annotationID,
+            to: annotation.updatingText(text, rect: rect)
+        )
+    }
+
+    func endTextEditing(annotationID: UUID) {
+        guard let initialHistoryState = textEditingInitialState else {
+            return
+        }
+
+        if let annotation = annotation(withID: annotationID),
+           case let .text(_, text) = annotation.geometry,
+           text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            annotationObjects.removeAll { annotation in
+                annotation.id == annotationID
+            }
+
+            if selectedAnnotationID == annotationID {
+                selectedAnnotationID = nil
+            }
+        }
+
+        textEditingInitialState = nil
+        commitHistoryTransition(from: initialHistoryState)
+    }
+
+    func textAnnotation(withID id: UUID) -> AnnotationObject? {
+        guard let annotation = annotation(withID: id),
+              annotation.kind == .text
+        else {
+            return nil
+        }
+
+        return annotation
     }
 
     func beginCanvasInteraction(
@@ -434,6 +524,9 @@ final class EditorViewModel: ObservableObject {
         case "o":
             selectTool(.oval)
             return true
+        case "t":
+            selectTool(.text)
+            return true
         default:
             return false
         }
@@ -485,7 +578,8 @@ final class EditorViewModel: ObservableObject {
             strokeColor: selectedStrokeColor,
             fillColor: .clear,
             lineWidth: selectedStrokeWidth,
-            opacity: selectedOpacity
+            opacity: selectedOpacity,
+            fontSize: selectedTextSize
         )
     }
 
@@ -506,10 +600,14 @@ final class EditorViewModel: ObservableObject {
     }
 
     @discardableResult
-    private func applyActiveStyleToSelectedAnnotation() -> Bool {
+    private func applyActiveStyleToSelectedAnnotation(only kind: AnnotationObjectKind? = nil) -> Bool {
         guard let selectedAnnotationID,
               let annotation = annotation(withID: selectedAnnotationID)
         else {
+            return false
+        }
+
+        if let kind, annotation.kind != kind {
             return false
         }
 
@@ -535,6 +633,7 @@ final class EditorViewModel: ObservableObject {
         selectedAnnotationID = state.selectedAnnotationID
         draftAnnotationObject = nil
         activeDragSession = nil
+        textEditingInitialState = nil
     }
 
     private func commitHistoryTransition(from previousState: EditorHistoryState) {
@@ -564,6 +663,15 @@ final class EditorViewModel: ObservableObject {
     private func updateHistoryAvailability() {
         canUndo = !undoStack.isEmpty
         canRedo = !redoStack.isEmpty
+    }
+
+    private func defaultTextRect(at point: CGPoint) -> CGRect {
+        CGRect(
+            x: point.x,
+            y: point.y,
+            width: 260,
+            height: max(48, selectedTextSize * 2.2)
+        )
     }
 }
 

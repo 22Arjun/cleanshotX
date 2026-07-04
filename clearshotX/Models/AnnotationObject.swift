@@ -34,6 +34,7 @@ enum AnnotationGeometry: Equatable {
     case arrow(start: CGPoint, end: CGPoint)
     case rectangle(CGRect)
     case oval(CGRect)
+    case text(rect: CGRect, text: String)
 
     var bounds: CGRect {
         switch self {
@@ -45,6 +46,8 @@ enum AnnotationGeometry: Equatable {
                 height: abs(end.y - start.y)
             )
         case let .rectangle(rect), let .oval(rect):
+            return rect.standardizedForEditor
+        case let .text(rect, _):
             return rect.standardizedForEditor
         }
     }
@@ -60,6 +63,8 @@ enum AnnotationGeometry: Equatable {
             return .rectangle(rect.offsetBy(dx: translation.width, dy: translation.height))
         case let .oval(rect):
             return .oval(rect.offsetBy(dx: translation.width, dy: translation.height))
+        case let .text(rect, text):
+            return .text(rect: rect.offsetBy(dx: translation.width, dy: translation.height), text: text)
         }
     }
 
@@ -160,6 +165,53 @@ enum AnnotationGeometry: Equatable {
             case .startPoint, .endPoint:
                 return self
             }
+        case let .text(rect, text):
+            let normalizedRect = rect.standardizedForEditor
+
+            switch handle {
+            case .topLeft:
+                return .text(
+                    rect: CGRect(
+                        x: point.x,
+                        y: point.y,
+                        width: normalizedRect.maxX - point.x,
+                        height: normalizedRect.maxY - point.y
+                    ).standardizedForEditor,
+                    text: text
+                )
+            case .topRight:
+                return .text(
+                    rect: CGRect(
+                        x: normalizedRect.minX,
+                        y: point.y,
+                        width: point.x - normalizedRect.minX,
+                        height: normalizedRect.maxY - point.y
+                    ).standardizedForEditor,
+                    text: text
+                )
+            case .bottomLeft:
+                return .text(
+                    rect: CGRect(
+                        x: point.x,
+                        y: normalizedRect.minY,
+                        width: normalizedRect.maxX - point.x,
+                        height: point.y - normalizedRect.minY
+                    ).standardizedForEditor,
+                    text: text
+                )
+            case .bottomRight:
+                return .text(
+                    rect: CGRect(
+                        x: normalizedRect.minX,
+                        y: normalizedRect.minY,
+                        width: point.x - normalizedRect.minX,
+                        height: point.y - normalizedRect.minY
+                    ).standardizedForEditor,
+                    text: text
+                )
+            case .startPoint, .endPoint:
+                return self
+            }
         }
     }
 }
@@ -169,6 +221,7 @@ struct AnnotationStyle: Equatable {
     var fillColor: NSColor = .clear
     var lineWidth: CGFloat = 3
     var opacity: CGFloat = 1
+    var fontSize: CGFloat = 24
 }
 
 struct AnnotationObject: Identifiable, Equatable {
@@ -233,6 +286,20 @@ struct AnnotationObject: Identifiable, Equatable {
         )
     }
 
+    static func text(
+        id: UUID = UUID(),
+        rect: CGRect,
+        text: String,
+        style: AnnotationStyle
+    ) -> AnnotationObject {
+        AnnotationObject(
+            id: id,
+            kind: .text,
+            geometry: .text(rect: rect.standardizedForEditor, text: text),
+            style: style
+        )
+    }
+
     func translated(by translation: CGSize) -> AnnotationObject {
         var object = self
         object.geometry = geometry.translated(by: translation)
@@ -248,6 +315,16 @@ struct AnnotationObject: Identifiable, Equatable {
     func applyingStyle(_ style: AnnotationStyle) -> AnnotationObject {
         var object = self
         object.style = style
+        return object
+    }
+
+    func updatingText(_ text: String, rect: CGRect? = nil) -> AnnotationObject {
+        guard case let .text(currentRect, _) = geometry else {
+            return self
+        }
+
+        var object = self
+        object.geometry = .text(rect: (rect ?? currentRect).standardizedForEditor, text: text)
         return object
     }
 }

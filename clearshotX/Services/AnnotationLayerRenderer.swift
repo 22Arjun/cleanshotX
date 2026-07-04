@@ -11,7 +11,7 @@ import QuartzCore
 protocol AnnotationShapeRendering {
     var kind: AnnotationObjectKind { get }
 
-    func makeLayer(for annotation: AnnotationObject) -> CAShapeLayer
+    func makeLayer(for annotation: AnnotationObject) -> CALayer
     func hitTest(_ point: CGPoint, annotation: AnnotationObject, tolerance: CGFloat) -> Bool
     func resizeHandles(for annotation: AnnotationObject, size: CGFloat) -> [AnnotationResizeHandle: CGRect]
     func selectionPath(for annotation: AnnotationObject) -> CGPath
@@ -23,7 +23,8 @@ final class AnnotationRendererRegistry {
     init(renderers: [AnnotationShapeRendering] = [
         ArrowAnnotationRenderer(),
         RectangleAnnotationRenderer(),
-        OvalAnnotationRenderer()
+        OvalAnnotationRenderer(),
+        TextAnnotationRenderer()
     ]) {
         self.renderers = renderers
     }
@@ -83,9 +84,13 @@ final class AnnotationLayerRenderer {
         for annotation: AnnotationObject,
         to containerLayer: CALayer,
         contentsScale: CGFloat
-    ) -> CAShapeLayer {
-        let layer = registry.renderer(for: annotation.kind)?.makeLayer(for: annotation) ?? CAShapeLayer()
-        layer.frame = containerLayer.bounds
+    ) -> CALayer {
+        let layer = registry.renderer(for: annotation.kind)?.makeLayer(for: annotation) ?? CALayer()
+
+        if layer.frame == .zero {
+            layer.frame = containerLayer.bounds
+        }
+
         layer.contentsScale = contentsScale
         containerLayer.addSublayer(layer)
         return layer
@@ -132,7 +137,7 @@ final class AnnotationLayerRenderer {
 final class ArrowAnnotationRenderer: AnnotationShapeRendering {
     let kind = AnnotationObjectKind.arrow
 
-    func makeLayer(for annotation: AnnotationObject) -> CAShapeLayer {
+    func makeLayer(for annotation: AnnotationObject) -> CALayer {
         let layer = CAShapeLayer()
         layer.path = arrowPath(for: annotation)
         layer.fillColor = annotation.style.strokeColor.cgColor
@@ -244,7 +249,7 @@ final class ArrowAnnotationRenderer: AnnotationShapeRendering {
 final class RectangleAnnotationRenderer: AnnotationShapeRendering {
     let kind = AnnotationObjectKind.rectangle
 
-    func makeLayer(for annotation: AnnotationObject) -> CAShapeLayer {
+    func makeLayer(for annotation: AnnotationObject) -> CALayer {
         let layer = CAShapeLayer()
         layer.path = rectanglePath(for: annotation)
         layer.fillColor = NSColor.clear.cgColor
@@ -294,7 +299,7 @@ final class RectangleAnnotationRenderer: AnnotationShapeRendering {
 final class OvalAnnotationRenderer: AnnotationShapeRendering {
     let kind = AnnotationObjectKind.oval
 
-    func makeLayer(for annotation: AnnotationObject) -> CAShapeLayer {
+    func makeLayer(for annotation: AnnotationObject) -> CALayer {
         let layer = CAShapeLayer()
         layer.path = ovalPath(for: annotation)
         layer.fillColor = NSColor.clear.cgColor
@@ -337,6 +342,70 @@ final class OvalAnnotationRenderer: AnnotationShapeRendering {
         }
 
         return CGPath(ellipseIn: rect.standardizedForEditor, transform: nil)
+    }
+}
+
+final class TextAnnotationRenderer: AnnotationShapeRendering {
+    let kind = AnnotationObjectKind.text
+
+    func makeLayer(for annotation: AnnotationObject) -> CALayer {
+        let layer = CATextLayer()
+        layer.frame = textRect(for: annotation)
+        layer.string = attributedText(for: annotation)
+        layer.alignmentMode = .left
+        layer.truncationMode = .none
+        layer.isWrapped = true
+        layer.contentsGravity = .topLeft
+        layer.opacity = Float(annotation.style.opacity)
+        layer.allowsEdgeAntialiasing = true
+        return layer
+    }
+
+    func hitTest(_ point: CGPoint, annotation: AnnotationObject, tolerance: CGFloat) -> Bool {
+        textRect(for: annotation)
+            .insetBy(dx: -tolerance, dy: -tolerance)
+            .contains(point)
+    }
+
+    func resizeHandles(for annotation: AnnotationObject, size: CGFloat) -> [AnnotationResizeHandle: CGRect] {
+        let normalizedRect = textRect(for: annotation).standardizedForEditor
+
+        return [
+            .topLeft: handleRect(centeredAt: CGPoint(x: normalizedRect.minX, y: normalizedRect.minY), size: size),
+            .topRight: handleRect(centeredAt: CGPoint(x: normalizedRect.maxX, y: normalizedRect.minY), size: size),
+            .bottomLeft: handleRect(centeredAt: CGPoint(x: normalizedRect.minX, y: normalizedRect.maxY), size: size),
+            .bottomRight: handleRect(centeredAt: CGPoint(x: normalizedRect.maxX, y: normalizedRect.maxY), size: size)
+        ]
+    }
+
+    func selectionPath(for annotation: AnnotationObject) -> CGPath {
+        CGPath(rect: textRect(for: annotation), transform: nil)
+    }
+
+    private func attributedText(for annotation: AnnotationObject) -> NSAttributedString {
+        guard case let .text(_, text) = annotation.geometry else {
+            return NSAttributedString()
+        }
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+
+        return NSAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: annotation.style.fontSize, weight: .semibold),
+                .foregroundColor: annotation.style.strokeColor,
+                .paragraphStyle: paragraphStyle
+            ]
+        )
+    }
+
+    private func textRect(for annotation: AnnotationObject) -> CGRect {
+        guard case let .text(rect, _) = annotation.geometry else {
+            return .zero
+        }
+
+        return rect.standardizedForEditor
     }
 }
 
