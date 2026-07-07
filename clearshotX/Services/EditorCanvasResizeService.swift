@@ -10,12 +10,14 @@ import QuartzCore
 
 @MainActor
 protocol EditorCanvasResizing {
-    func resizedCanvasImage(from image: NSImage, to cropRect: CGRect) -> NSImage?
+    func resizedCanvasImage(from image: NSImage, to cropRect: CGRect, fillColor: NSColor) -> NSImage?
+    func rotatedClockwiseImage(from image: NSImage) -> NSImage?
+    func flippedImage(from image: NSImage, horizontally: Bool) -> NSImage?
 }
 
 @MainActor
 final class EditorCanvasResizeService: EditorCanvasResizing {
-    func resizedCanvasImage(from image: NSImage, to cropRect: CGRect) -> NSImage? {
+    func resizedCanvasImage(from image: NSImage, to cropRect: CGRect, fillColor: NSColor) -> NSImage? {
         guard let sourceImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             return nil
         }
@@ -69,7 +71,7 @@ final class EditorCanvasResizeService: EditorCanvasResizing {
         rootLayer.addSublayer(imageLayer)
 
         context.interpolationQuality = .high
-        context.setFillColor(NSColor.clear.cgColor)
+        context.setFillColor(fillColor.cgColor)
         context.fill(CGRect(origin: .zero, size: outputPixelSize))
 
         context.saveGState()
@@ -82,6 +84,82 @@ final class EditorCanvasResizeService: EditorCanvasResizing {
         }
 
         return NSImage(cgImage: resizedImage, size: targetRect.size)
+    }
+
+    func rotatedClockwiseImage(from image: NSImage) -> NSImage? {
+        guard let sourceImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let context = bitmapContext(
+                width: sourceImage.height,
+                height: sourceImage.width,
+                colorSpace: sourceImage.colorSpace
+              )
+        else {
+            return nil
+        }
+
+        let outputPixelSize = CGSize(width: sourceImage.height, height: sourceImage.width)
+        context.interpolationQuality = .high
+        context.clear(CGRect(origin: .zero, size: outputPixelSize))
+        context.translateBy(x: outputPixelSize.width, y: 0)
+        context.rotate(by: .pi / 2)
+        context.draw(
+            sourceImage,
+            in: CGRect(x: 0, y: 0, width: sourceImage.width, height: sourceImage.height)
+        )
+
+        guard let transformedImage = context.makeImage() else {
+            return nil
+        }
+
+        return NSImage(cgImage: transformedImage, size: CGSize(width: image.editorResizeCanvasSize.height, height: image.editorResizeCanvasSize.width))
+    }
+
+    func flippedImage(from image: NSImage, horizontally: Bool) -> NSImage? {
+        guard let sourceImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let context = bitmapContext(
+                width: sourceImage.width,
+                height: sourceImage.height,
+                colorSpace: sourceImage.colorSpace
+              )
+        else {
+            return nil
+        }
+
+        let outputPixelSize = CGSize(width: sourceImage.width, height: sourceImage.height)
+        context.interpolationQuality = .high
+        context.clear(CGRect(origin: .zero, size: outputPixelSize))
+
+        if horizontally {
+            context.translateBy(x: outputPixelSize.width, y: 0)
+            context.scaleBy(x: -1, y: 1)
+        } else {
+            context.translateBy(x: 0, y: outputPixelSize.height)
+            context.scaleBy(x: 1, y: -1)
+        }
+
+        context.draw(sourceImage, in: CGRect(origin: .zero, size: outputPixelSize))
+
+        guard let transformedImage = context.makeImage() else {
+            return nil
+        }
+
+        return NSImage(cgImage: transformedImage, size: image.editorResizeCanvasSize)
+    }
+
+    private func bitmapContext(
+        width: Int,
+        height: Int,
+        colorSpace: CGColorSpace?
+    ) -> CGContext? {
+        CGContext(
+            data: nil,
+            width: max(1, width),
+            height: max(1, height),
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
     }
 }
 

@@ -34,6 +34,14 @@ struct EditorView: View {
 
 private struct EditorToolbarView: View {
     @ObservedObject var viewModel: EditorViewModel
+    private static let cropDimensionFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.allowsFloats = false
+        formatter.minimum = 1
+        formatter.maximumFractionDigits = 0
+        formatter.usesGroupingSeparator = false
+        return formatter
+    }()
 
     var body: some View {
         HStack(spacing: 8) {
@@ -54,6 +62,11 @@ private struct EditorToolbarView: View {
                         .frame(height: 1)
                 }
         }
+        .onHover { isHovering in
+            if isHovering {
+                NSCursor.arrow.set()
+            }
+        }
     }
 
     private var annotationToolbarContent: some View {
@@ -71,11 +84,15 @@ private struct EditorToolbarView: View {
 
     private var cropToolbarContent: some View {
         Group {
-            cropRatioMenu
             cropModeButtonGroup
+            cropRatioMenu
+            cropDimensionControls
+            cropCanvasColorMenu
+            toolbarDivider
+            cropTransformControls
+            toolbarDivider
+            cropImageSizeMenu
             Spacer(minLength: 12)
-            toolButtonGroup(EditorToolbarAction.historyCommands)
-            toolButtonGroup(EditorToolbarAction.outputCommands)
         }
     }
 
@@ -170,12 +187,183 @@ private struct EditorToolbarView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
             .buttonStyle(EditorToolbarButtonStyle(isSelected: true))
-            .help("Crop/Resize Canvas (\(EditorToolbarAction.crop.shortcutHint))")
+            .help("Exit Crop Mode (\(EditorToolbarAction.crop.shortcutHint))")
             .editorKeyboardShortcut(for: .crop)
-            .accessibilityLabel("Crop Resize Canvas")
-            .accessibilityHint("Adjust the crop frame on the image")
+            .accessibilityLabel("Exit Crop Mode")
+            .accessibilityHint("Return to annotation tools")
         }
         .toolbarGroupChrome()
+    }
+
+    private var cropDimensionControls: some View {
+        HStack(spacing: 8) {
+            cropDimensionField(
+                value: Binding(
+                    get: { viewModel.cropFramePixelWidth },
+                    set: { viewModel.setCropFramePixelWidth($0) }
+                ),
+                accessibilityLabel: "Crop Width"
+            )
+
+            Image(systemName: "arrow.left.and.right")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                .frame(width: 18)
+                .help("Crop dimensions")
+                .accessibilityHidden(true)
+
+            cropDimensionField(
+                value: Binding(
+                    get: { viewModel.cropFramePixelHeight },
+                    set: { viewModel.setCropFramePixelHeight($0) }
+                ),
+                accessibilityLabel: "Crop Height"
+            )
+        }
+    }
+
+    private func cropDimensionField(
+        value: Binding<Int>,
+        accessibilityLabel: String
+    ) -> some View {
+        TextField("", value: value, formatter: Self.cropDimensionFormatter)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, weight: .semibold, design: .rounded))
+            .multilineTextAlignment(.center)
+            .foregroundStyle(Color(nsColor: .labelColor).opacity(0.9))
+            .frame(width: 74, height: 34)
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.78))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.52), lineWidth: 1)
+            }
+            .help("\(accessibilityLabel) in pixels")
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityValue("\(value.wrappedValue) pixels")
+    }
+
+    private var cropCanvasColorMenu: some View {
+        Menu {
+            ForEach(EditorViewModel.cropFillColorOptions) { option in
+                Button {
+                    viewModel.setCropFillColor(option)
+                } label: {
+                    HStack {
+                        if viewModel.isCropFillColorSelected(option) {
+                            Image(systemName: "checkmark")
+                        }
+
+                        Text(option.name)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                cropFillSwatch(color: viewModel.selectedCropFillColor)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            }
+            .frame(width: 52, height: 34)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .help("Canvas Fill Color: \(viewModel.selectedCropFillColorName)")
+        .accessibilityLabel("Canvas Fill Color")
+        .accessibilityValue(viewModel.selectedCropFillColorName)
+        .toolbarGroupChrome()
+    }
+
+    private func cropFillSwatch(color: NSColor) -> some View {
+        ZStack {
+            Circle()
+                .fill(Color(nsColor: color))
+
+            if color.alphaComponent <= 0.01 {
+                Image(systemName: "slash")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            }
+
+            Circle()
+                .stroke(Color(nsColor: .separatorColor).opacity(0.82), lineWidth: 1)
+        }
+        .frame(width: 18, height: 18)
+    }
+
+    private var cropTransformControls: some View {
+        HStack(spacing: 3) {
+            Button {
+                viewModel.rotateCropImageClockwise()
+            } label: {
+                Image(systemName: "rotate.right")
+                    .font(.system(size: 15, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .frame(width: 34, height: 34)
+                    .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(EditorToolbarButtonStyle(isSelected: false))
+            .help("Rotate 90° Clockwise")
+            .accessibilityLabel("Rotate 90 Degrees Clockwise")
+
+            Button {
+                viewModel.flipCropImageHorizontally()
+            } label: {
+                Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                    .font(.system(size: 15, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .frame(width: 34, height: 34)
+                    .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(EditorToolbarButtonStyle(isSelected: false))
+            .help("Flip Horizontally")
+            .accessibilityLabel("Flip Horizontally")
+
+            Button {
+                viewModel.flipCropImageVertically()
+            } label: {
+                Image(systemName: "arrow.up.and.down.righttriangle.up.righttriangle.down")
+                    .font(.system(size: 15, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .frame(width: 34, height: 34)
+                    .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(EditorToolbarButtonStyle(isSelected: false))
+            .help("Flip Vertically")
+            .accessibilityLabel("Flip Vertically")
+        }
+        .toolbarGroupChrome()
+    }
+
+    private var cropImageSizeMenu: some View {
+        HStack(spacing: 8) {
+            Text("Image size:")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+
+            Text(viewModel.canvasPixelSizeTitle)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color(nsColor: .labelColor).opacity(0.92))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 11)
+        .frame(height: 34)
+        .help("Image Size: \(viewModel.canvasPixelSizeTitle)")
+        .accessibilityLabel("Image Size")
+        .accessibilityValue(viewModel.canvasPixelSizeTitle)
+        .toolbarGroupChrome()
+    }
+
+    private var toolbarDivider: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(0.55))
+            .frame(width: 1, height: 28)
+            .padding(.horizontal, 6)
+            .accessibilityHidden(true)
     }
 
     private var colorPalette: some View {

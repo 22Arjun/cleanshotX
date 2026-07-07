@@ -36,6 +36,12 @@ struct EditorCropRatioOption: Identifiable, Equatable {
     let usesOriginalImageRatio: Bool
 }
 
+struct EditorCropFillColorOption: Identifiable {
+    let id: String
+    let name: String
+    let color: NSColor
+}
+
 enum EditorCropFrameHitResult: Equatable {
     case resize(EditorCropFrameHandle)
     case move
@@ -209,13 +215,15 @@ final class EditorViewModel: ObservableObject {
     static let opacityOptions: [CGFloat] = [1, 0.75, 0.5]
     static let cropRatioOptions: [EditorCropRatioOption] = [
         EditorCropRatioOption(id: "freeform", title: "Freeform", ratio: nil, usesOriginalImageRatio: false),
-        EditorCropRatioOption(id: "original", title: "Original Ratio", ratio: nil, usesOriginalImageRatio: true),
         EditorCropRatioOption(id: "square", title: "1 : 1 (Square)", ratio: 1, usesOriginalImageRatio: false),
-        EditorCropRatioOption(id: "fiveFour", title: "5 : 4 (10 : 8)", ratio: 5 / 4, usesOriginalImageRatio: false),
-        EditorCropRatioOption(id: "sevenFive", title: "7 : 5", ratio: 7 / 5, usesOriginalImageRatio: false),
+        EditorCropRatioOption(id: "sixteenNine", title: "16 : 9", ratio: 16 / 9, usesOriginalImageRatio: false),
         EditorCropRatioOption(id: "fourThree", title: "4 : 3", ratio: 4 / 3, usesOriginalImageRatio: false),
-        EditorCropRatioOption(id: "threeTwo", title: "3 : 2 (6 : 4)", ratio: 3 / 2, usesOriginalImageRatio: false),
-        EditorCropRatioOption(id: "sixteenNine", title: "16 : 9", ratio: 16 / 9, usesOriginalImageRatio: false)
+        EditorCropRatioOption(id: "original", title: "Original", ratio: nil, usesOriginalImageRatio: true)
+    ]
+    static let cropFillColorOptions: [EditorCropFillColorOption] = [
+        EditorCropFillColorOption(id: "transparent", name: "Transparent", color: .clear),
+        EditorCropFillColorOption(id: "black", name: "Black", color: .black),
+        EditorCropFillColorOption(id: "white", name: "White", color: .white)
     ]
 
     let id = UUID()
@@ -232,6 +240,7 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var selectedTextSize: CGFloat = 24
     @Published private(set) var selectedOpacity: CGFloat = 1
     @Published private(set) var selectedCropRatioID = "freeform"
+    @Published private(set) var selectedCropFillColorID = "transparent"
     @Published private(set) var isCropGridVisible = false
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
@@ -262,10 +271,36 @@ final class EditorViewModel: ObservableObject {
         selectedCropRatioOption.title
     }
 
+    var cropFramePixelWidth: Int {
+        Int(round((draftCropRect ?? currentCanvasBounds).standardizedForEditor.width))
+    }
+
+    var cropFramePixelHeight: Int {
+        Int(round((draftCropRect ?? currentCanvasBounds).standardizedForEditor.height))
+    }
+
+    var canvasPixelSizeTitle: String {
+        "\(cropFramePixelWidth) × \(cropFramePixelHeight) px"
+    }
+
+    var selectedCropFillColor: NSColor {
+        selectedCropFillColorOption.color
+    }
+
+    var selectedCropFillColorName: String {
+        selectedCropFillColorOption.name
+    }
+
     private var selectedCropRatioOption: EditorCropRatioOption {
         Self.cropRatioOptions.first { option in
             option.id == selectedCropRatioID
         } ?? Self.cropRatioOptions[0]
+    }
+
+    private var selectedCropFillColorOption: EditorCropFillColorOption {
+        Self.cropFillColorOptions.first { option in
+            option.id == selectedCropFillColorID
+        } ?? Self.cropFillColorOptions[0]
     }
 
     private var currentCanvasBounds: CGRect {
@@ -287,6 +322,11 @@ final class EditorViewModel: ObservableObject {
     }
 
     func perform(_ action: EditorToolbarAction) {
+        if action == .crop {
+            toggleCropTool()
+            return
+        }
+
         if let tool = action.tool {
             selectTool(tool)
             return
@@ -384,6 +424,34 @@ final class EditorViewModel: ObservableObject {
     func setCropRatio(_ option: EditorCropRatioOption) {
         selectedCropRatioID = option.id
         updateCropFrameForSelectedRatio()
+    }
+
+    func setCropFramePixelWidth(_ width: Int) {
+        updateDraftCropFrameSize(changedAxis: .width, value: CGFloat(width))
+    }
+
+    func setCropFramePixelHeight(_ height: Int) {
+        updateDraftCropFrameSize(changedAxis: .height, value: CGFloat(height))
+    }
+
+    func isCropFillColorSelected(_ option: EditorCropFillColorOption) -> Bool {
+        selectedCropFillColorID == option.id
+    }
+
+    func setCropFillColor(_ option: EditorCropFillColorOption) {
+        selectedCropFillColorID = option.id
+    }
+
+    func rotateCropImageClockwise() {
+        transformCanvasImage(.rotateClockwise)
+    }
+
+    func flipCropImageHorizontally() {
+        transformCanvasImage(.flipHorizontally)
+    }
+
+    func flipCropImageVertically() {
+        transformCanvasImage(.flipVertically)
     }
 
     @discardableResult
@@ -580,10 +648,13 @@ final class EditorViewModel: ObservableObject {
                 return
             }
 
+            let targetRatio = constrainingCropToOriginalRatio
+                ? originalImageCropRatio()
+                : selectedCropRatio()
             draftCropRect = cropRect(
                 from: startPoint,
                 to: clampedPoint,
-                targetRatio: nil
+                targetRatio: targetRatio
             )
             .clampedInside(currentCanvasBounds, minimumSize: 1)
             self.activeDragSession = .drawingCropFrame(
@@ -735,7 +806,7 @@ final class EditorViewModel: ObservableObject {
             selectTool(.blurPixelate)
             return true
         case "x":
-            selectTool(.crop)
+            toggleCropTool()
             return true
         default:
             return false
@@ -779,7 +850,8 @@ final class EditorViewModel: ObservableObject {
         guard !normalizedCropRect.isNearlyEqual(to: canvasBounds),
               let resizedImage = canvasResizeService.resizedCanvasImage(
                 from: image,
-                to: normalizedCropRect
+                to: normalizedCropRect,
+                fillColor: selectedCropFillColor
               )
         else {
             return false
@@ -801,6 +873,68 @@ final class EditorViewModel: ObservableObject {
         return true
     }
 
+    private func transformCanvasImage(_ transform: EditorCanvasImageTransform) {
+        let canvasSize = image.editorHistoryCanvasSize
+        guard canvasSize.width > 0,
+              canvasSize.height > 0
+        else {
+            return
+        }
+
+        let transformedImage: NSImage?
+        let transformedAnnotations: [AnnotationObject]
+        let transformedCropRect: CGRect?
+
+        switch transform {
+        case .rotateClockwise:
+            transformedImage = canvasResizeService.rotatedClockwiseImage(from: image)
+            transformedAnnotations = annotationObjects.map { annotation in
+                annotation.rotatedClockwise(in: canvasSize)
+            }
+            transformedCropRect = draftCropRect?.transformedByMappingCorners { point in
+                CGPoint(x: canvasSize.height - point.y, y: point.x)
+            }
+        case .flipHorizontally:
+            transformedImage = canvasResizeService.flippedImage(from: image, horizontally: true)
+            transformedAnnotations = annotationObjects.map { annotation in
+                annotation.flippedHorizontally(in: canvasSize)
+            }
+            transformedCropRect = draftCropRect?.transformedByMappingCorners { point in
+                CGPoint(x: canvasSize.width - point.x, y: point.y)
+            }
+        case .flipVertically:
+            transformedImage = canvasResizeService.flippedImage(from: image, horizontally: false)
+            transformedAnnotations = annotationObjects.map { annotation in
+                annotation.flippedVertically(in: canvasSize)
+            }
+            transformedCropRect = draftCropRect?.transformedByMappingCorners { point in
+                CGPoint(x: point.x, y: canvasSize.height - point.y)
+            }
+        }
+
+        guard let transformedImage else {
+            return
+        }
+
+        let previousState = currentHistoryState()
+        image = transformedImage
+        imageRevision = UUID()
+        annotationObjects = transformedAnnotations
+        selectedAnnotationID = nil
+        draftAnnotationObject = nil
+        activeDragSession = nil
+        isCropGridVisible = false
+
+        if activeTool == .crop {
+            draftCropRect = (transformedCropRect ?? currentCanvasBounds)
+                .clampedInside(currentCanvasBounds, minimumSize: minimumCropFrameLength)
+        } else {
+            draftCropRect = nil
+        }
+
+        recordUndoState(previousState)
+    }
+
     private func shouldCommitCrop(_ rect: CGRect) -> Bool {
         let normalizedRect = rect.standardizedForEditor
         return normalizedRect.width >= 8 && normalizedRect.height >= 8
@@ -812,6 +946,58 @@ final class EditorViewModel: ObservableObject {
         }
 
         draftCropRect = adjustedCropFrameForSelectedRatio(from: draftCropRect)
+    }
+
+    private func updateDraftCropFrameSize(
+        changedAxis: EditorCropFrameDimensionAxis,
+        value: CGFloat
+    ) {
+        guard activeTool == .crop else {
+            return
+        }
+
+        let bounds = currentCanvasBounds
+        guard bounds.width > 0,
+              bounds.height > 0
+        else {
+            return
+        }
+
+        let currentRect = (draftCropRect ?? defaultCropFrame()).standardizedForEditor
+        let center = CGPoint(x: currentRect.midX, y: currentRect.midY)
+        let minimumLength = minimumCropFrameLength
+        let ratio = selectedCropRatio()
+        var width = currentRect.width
+        var height = currentRect.height
+
+        if let ratio {
+            switch changedAxis {
+            case .width:
+                let maximumWidth = max(minimumLength, min(bounds.width, bounds.height * ratio))
+                width = clamped(value, lowerBound: minimumLength, upperBound: maximumWidth)
+                height = width / ratio
+            case .height:
+                let maximumHeight = max(minimumLength, min(bounds.height, bounds.width / ratio))
+                height = clamped(value, lowerBound: minimumLength, upperBound: maximumHeight)
+                width = height * ratio
+            }
+        } else {
+            switch changedAxis {
+            case .width:
+                width = clamped(value, lowerBound: minimumLength, upperBound: bounds.width)
+            case .height:
+                height = clamped(value, lowerBound: minimumLength, upperBound: bounds.height)
+            }
+        }
+
+        draftCropRect = CGRect(
+            x: center.x - width / 2,
+            y: center.y - height / 2,
+            width: width,
+            height: height
+        )
+        .clampedInside(bounds, minimumSize: minimumLength)
+        .standardizedForEditor
     }
 
     private func defaultCropFrame() -> CGRect {
@@ -895,11 +1081,36 @@ final class EditorViewModel: ObservableObject {
         case .bottomLeft:
             return cropRect(from: CGPoint(x: rect.maxX, y: rect.minY), to: clampedPoint, targetRatio: targetRatio)
                 .clampedInside(canvasBounds, minimumSize: minimumCropFrameLength)
-        case .top, .right, .bottom, .left:
-            return freeformCropFrame(
+        case .top:
+            return ratioCropFrameByChangingHeight(
                 rect,
-                using: handle,
-                to: clampedPoint,
+                anchoredEdge: .bottom,
+                to: clampedPoint.y,
+                ratio: targetRatio,
+                in: canvasBounds
+            )
+        case .right:
+            return ratioCropFrameByChangingWidth(
+                rect,
+                anchoredEdge: .left,
+                to: clampedPoint.x,
+                ratio: targetRatio,
+                in: canvasBounds
+            )
+        case .bottom:
+            return ratioCropFrameByChangingHeight(
+                rect,
+                anchoredEdge: .top,
+                to: clampedPoint.y,
+                ratio: targetRatio,
+                in: canvasBounds
+            )
+        case .left:
+            return ratioCropFrameByChangingWidth(
+                rect,
+                anchoredEdge: .right,
+                to: clampedPoint.x,
+                ratio: targetRatio,
                 in: canvasBounds
             )
         }
@@ -1112,6 +1323,14 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
+    private func toggleCropTool() {
+        if activeTool == .crop {
+            clearActiveTool()
+        } else {
+            selectTool(.crop)
+        }
+    }
+
     private func activeAnnotationStyle() -> AnnotationStyle {
         AnnotationStyle(
             strokeColor: selectedStrokeColor,
@@ -1269,6 +1488,17 @@ private enum HorizontalCropFrameEdge {
 private enum VerticalCropFrameEdge {
     case top
     case bottom
+}
+
+private enum EditorCropFrameDimensionAxis {
+    case width
+    case height
+}
+
+private enum EditorCanvasImageTransform {
+    case rotateClockwise
+    case flipHorizontally
+    case flipVertically
 }
 
 private struct EditorHistoryState: Equatable {

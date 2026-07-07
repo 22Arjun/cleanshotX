@@ -74,6 +74,66 @@ enum AnnotationGeometry: Equatable {
         }
     }
 
+    func rotatedClockwise(in canvasSize: CGSize) -> AnnotationGeometry {
+        switch self {
+        case let .arrow(start, end):
+            return .arrow(
+                start: start.rotatedClockwise(in: canvasSize),
+                end: end.rotatedClockwise(in: canvasSize)
+            )
+        case let .rectangle(rect):
+            return .rectangle(rect.transformedByMappingCorners { $0.rotatedClockwise(in: canvasSize) })
+        case let .oval(rect):
+            return .oval(rect.transformedByMappingCorners { $0.rotatedClockwise(in: canvasSize) })
+        case let .text(rect, text):
+            return .text(rect: rect.transformedByMappingCorners { $0.rotatedClockwise(in: canvasSize) }, text: text)
+        case let .highlight(rect):
+            return .highlight(rect.transformedByMappingCorners { $0.rotatedClockwise(in: canvasSize) })
+        case let .blurPixelate(rect):
+            return .blurPixelate(rect.transformedByMappingCorners { $0.rotatedClockwise(in: canvasSize) })
+        }
+    }
+
+    func flippedHorizontally(in canvasSize: CGSize) -> AnnotationGeometry {
+        switch self {
+        case let .arrow(start, end):
+            return .arrow(
+                start: start.flippedHorizontally(in: canvasSize),
+                end: end.flippedHorizontally(in: canvasSize)
+            )
+        case let .rectangle(rect):
+            return .rectangle(rect.transformedByMappingCorners { $0.flippedHorizontally(in: canvasSize) })
+        case let .oval(rect):
+            return .oval(rect.transformedByMappingCorners { $0.flippedHorizontally(in: canvasSize) })
+        case let .text(rect, text):
+            return .text(rect: rect.transformedByMappingCorners { $0.flippedHorizontally(in: canvasSize) }, text: text)
+        case let .highlight(rect):
+            return .highlight(rect.transformedByMappingCorners { $0.flippedHorizontally(in: canvasSize) })
+        case let .blurPixelate(rect):
+            return .blurPixelate(rect.transformedByMappingCorners { $0.flippedHorizontally(in: canvasSize) })
+        }
+    }
+
+    func flippedVertically(in canvasSize: CGSize) -> AnnotationGeometry {
+        switch self {
+        case let .arrow(start, end):
+            return .arrow(
+                start: start.flippedVertically(in: canvasSize),
+                end: end.flippedVertically(in: canvasSize)
+            )
+        case let .rectangle(rect):
+            return .rectangle(rect.transformedByMappingCorners { $0.flippedVertically(in: canvasSize) })
+        case let .oval(rect):
+            return .oval(rect.transformedByMappingCorners { $0.flippedVertically(in: canvasSize) })
+        case let .text(rect, text):
+            return .text(rect: rect.transformedByMappingCorners { $0.flippedVertically(in: canvasSize) }, text: text)
+        case let .highlight(rect):
+            return .highlight(rect.transformedByMappingCorners { $0.flippedVertically(in: canvasSize) })
+        case let .blurPixelate(rect):
+            return .blurPixelate(rect.transformedByMappingCorners { $0.flippedVertically(in: canvasSize) })
+        }
+    }
+
     func resized(using handle: AnnotationResizeHandle, to point: CGPoint) -> AnnotationGeometry {
         switch self {
         case let .arrow(start, end):
@@ -425,6 +485,24 @@ struct AnnotationObject: Identifiable, Equatable {
         return object
     }
 
+    func rotatedClockwise(in canvasSize: CGSize) -> AnnotationObject {
+        var object = self
+        object.geometry = geometry.rotatedClockwise(in: canvasSize)
+        return object
+    }
+
+    func flippedHorizontally(in canvasSize: CGSize) -> AnnotationObject {
+        var object = self
+        object.geometry = geometry.flippedHorizontally(in: canvasSize)
+        return object
+    }
+
+    func flippedVertically(in canvasSize: CGSize) -> AnnotationObject {
+        var object = self
+        object.geometry = geometry.flippedVertically(in: canvasSize)
+        return object
+    }
+
     func resized(using handle: AnnotationResizeHandle, to point: CGPoint) -> AnnotationObject {
         var object = self
         object.geometry = geometry.resized(using: handle, to: point)
@@ -456,5 +534,36 @@ extension CGRect {
             width: abs(width),
             height: abs(height)
         )
+    }
+
+    func transformedByMappingCorners(_ transform: (CGPoint) -> CGPoint) -> CGRect {
+        let rect = standardizedForEditor
+        let transformedCorners = [
+            transform(CGPoint(x: rect.minX, y: rect.minY)),
+            transform(CGPoint(x: rect.maxX, y: rect.minY)),
+            transform(CGPoint(x: rect.maxX, y: rect.maxY)),
+            transform(CGPoint(x: rect.minX, y: rect.maxY))
+        ]
+        let minX = transformedCorners.map(\.x).min() ?? 0
+        let minY = transformedCorners.map(\.y).min() ?? 0
+        let maxX = transformedCorners.map(\.x).max() ?? 0
+        let maxY = transformedCorners.map(\.y).max() ?? 0
+
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            .standardizedForEditor
+    }
+}
+
+private extension CGPoint {
+    func rotatedClockwise(in canvasSize: CGSize) -> CGPoint {
+        CGPoint(x: canvasSize.height - y, y: x)
+    }
+
+    func flippedHorizontally(in canvasSize: CGSize) -> CGPoint {
+        CGPoint(x: canvasSize.width - x, y: y)
+    }
+
+    func flippedVertically(in canvasSize: CGSize) -> CGPoint {
+        CGPoint(x: x, y: canvasSize.height - y)
     }
 }
