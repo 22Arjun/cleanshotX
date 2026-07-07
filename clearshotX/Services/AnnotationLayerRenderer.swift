@@ -231,45 +231,81 @@ final class ArrowAnnotationRenderer: AnnotationShapeRendering {
         let unit = CGVector(dx: deltaX / length, dy: deltaY / length)
         let perpendicular = CGVector(dx: -unit.dy, dy: unit.dx)
 
-        let thickness = annotation.style.lineWidth
-        let tailWidth = min(max(3.5, thickness * 0.85), max(3.5, length * 0.14))
-        let headWidth = min(max(18, thickness * 5.6), max(tailWidth * 2.6, length * 0.58))
-        let headLength = min(max(18, thickness * 5.8), max(8, length * 0.44))
+        let thickness = max(1, annotation.style.lineWidth)
+        let tailWidth = min(max(6, thickness * 2.35), max(4, length * 0.17))
+        let shaftEndWidth = min(max(tailWidth * 1.72, thickness * 4.5), max(tailWidth, length * 0.26))
+        let headWidth = min(max(shaftEndWidth * 2.08, thickness * 9.5), max(shaftEndWidth * 1.45, length * 0.46))
+        let headLength = min(max(headWidth * 0.88, thickness * 9.8), max(10, length * 0.34))
+        let shaftLength = max(2, length - headLength)
         let headBase = CGPoint(
             x: end.x - unit.dx * headLength,
             y: end.y - unit.dy * headLength
         )
 
-        let tailLeft = offset(start, along: perpendicular, distance: tailWidth / 2)
-        let tailRight = offset(start, along: perpendicular, distance: -tailWidth / 2)
-        let headBaseLeft = offset(headBase, along: perpendicular, distance: headWidth / 2)
-        let headBaseRight = offset(headBase, along: perpendicular, distance: -headWidth / 2)
-        let leftControlA = offset(
-            offset(start, along: unit, distance: length * 0.36),
+        let tailHalfWidth = tailWidth / 2
+        let shaftHalfWidth = shaftEndWidth / 2
+        let headHalfWidth = headWidth / 2
+        let tailCapCenter = offset(start, along: unit, distance: min(tailHalfWidth, shaftLength * 0.22))
+        let tailBackControl = offset(start, along: unit, distance: -tailHalfWidth * 0.48)
+        let tipRoundness = min(3, max(1.1, headWidth * 0.035))
+
+        let tailLeft = offset(tailCapCenter, along: perpendicular, distance: tailHalfWidth)
+        let tailRight = offset(tailCapCenter, along: perpendicular, distance: -tailHalfWidth)
+        let shaftJoinLeft = offset(headBase, along: perpendicular, distance: shaftHalfWidth)
+        let shaftJoinRight = offset(headBase, along: perpendicular, distance: -shaftHalfWidth)
+        let headBaseLeft = offset(headBase, along: perpendicular, distance: headHalfWidth)
+        let headBaseRight = offset(headBase, along: perpendicular, distance: -headHalfWidth)
+        let roundedTipLeft = offset(
+            offset(end, along: unit, distance: -tipRoundness),
             along: perpendicular,
-            distance: tailWidth * 0.8
+            distance: tipRoundness * 0.38
         )
-        let leftControlB = offset(
-            offset(headBase, along: unit, distance: -headLength * 0.24),
+        let roundedTipRight = offset(
+            offset(end, along: unit, distance: -tipRoundness),
             along: perpendicular,
-            distance: headWidth * 0.48
+            distance: -tipRoundness * 0.38
         )
-        let rightControlA = offset(
-            offset(headBase, along: unit, distance: -headLength * 0.24),
+
+        let leftShaftControlA = offset(
+            offset(start, along: unit, distance: shaftLength * 0.34),
             along: perpendicular,
-            distance: -headWidth * 0.48
+            distance: tailHalfWidth * 1.03
         )
-        let rightControlB = offset(
-            offset(start, along: unit, distance: length * 0.36),
+        let leftShaftControlB = offset(
+            offset(headBase, along: unit, distance: -shaftLength * 0.24),
             along: perpendicular,
-            distance: -tailWidth * 0.8
+            distance: shaftHalfWidth * 0.98
+        )
+        let leftShoulderControl = offset(
+            offset(headBase, along: unit, distance: -headLength * 0.08),
+            along: perpendicular,
+            distance: shaftHalfWidth + (headHalfWidth - shaftHalfWidth) * 0.42
+        )
+        let rightShoulderControl = offset(
+            offset(headBase, along: unit, distance: -headLength * 0.08),
+            along: perpendicular,
+            distance: -(shaftHalfWidth + (headHalfWidth - shaftHalfWidth) * 0.42)
+        )
+        let rightShaftControlA = offset(
+            offset(headBase, along: unit, distance: -shaftLength * 0.24),
+            along: perpendicular,
+            distance: -shaftHalfWidth * 0.98
+        )
+        let rightShaftControlB = offset(
+            offset(start, along: unit, distance: shaftLength * 0.34),
+            along: perpendicular,
+            distance: -tailHalfWidth * 1.03
         )
 
         path.move(to: tailLeft)
-        path.addCurve(to: headBaseLeft, control1: leftControlA, control2: leftControlB)
-        path.addLine(to: end)
+        path.addCurve(to: shaftJoinLeft, control1: leftShaftControlA, control2: leftShaftControlB)
+        path.addQuadCurve(to: headBaseLeft, control: leftShoulderControl)
+        path.addLine(to: roundedTipLeft)
+        path.addQuadCurve(to: roundedTipRight, control: end)
         path.addLine(to: headBaseRight)
-        path.addCurve(to: tailRight, control1: rightControlA, control2: rightControlB)
+        path.addQuadCurve(to: shaftJoinRight, control: rightShoulderControl)
+        path.addCurve(to: tailRight, control1: rightShaftControlA, control2: rightShaftControlB)
+        path.addQuadCurve(to: tailLeft, control: tailBackControl)
         path.closeSubpath()
 
         return path
