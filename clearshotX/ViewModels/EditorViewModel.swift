@@ -263,6 +263,7 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var draftCropRect: CGRect?
     @Published private(set) var selectedStrokeColorID = "red"
     @Published private(set) var selectedStrokeWidth: CGFloat = 4
+    @Published private(set) var selectedArrowStyle: AnnotationArrowStyle = .fancy
     @Published private(set) var selectedTextSize: CGFloat = 24
     @Published private(set) var selectedOpacity: CGFloat = 1
     @Published private(set) var selectedCropRatioID = "freeform"
@@ -292,6 +293,14 @@ final class EditorViewModel: ObservableObject {
 
     var isCropModeActive: Bool {
         activeTool == .crop
+    }
+
+    var shouldShowArrowStyleMenu: Bool {
+        activeTool == .arrow || selectedAnnotation?.kind == .arrow
+    }
+
+    var selectedArrowStyleTitle: String {
+        selectedArrowStyle.title
     }
 
     var selectedCropRatioTitle: String {
@@ -339,6 +348,14 @@ final class EditorViewModel: ObservableObject {
         Self.cropFillColorOptions.first { option in
             option.id == selectedCropFillColorID
         } ?? Self.cropFillColorOptions[0]
+    }
+
+    private var selectedAnnotation: AnnotationObject? {
+        guard let selectedAnnotationID else {
+            return nil
+        }
+
+        return annotation(withID: selectedAnnotationID)
     }
 
     private var currentCanvasBounds: CGRect {
@@ -421,6 +438,15 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
+    func setArrowStyle(_ arrowStyle: AnnotationArrowStyle) {
+        let previousState = currentHistoryState()
+        selectedArrowStyle = arrowStyle
+
+        if applyActiveStyleToSelectedAnnotation(only: .arrow) {
+            recordUndoState(previousState)
+        }
+    }
+
     func setTextSize(_ size: CGFloat) {
         let previousState = currentHistoryState()
         selectedTextSize = size
@@ -445,6 +471,10 @@ final class EditorViewModel: ObservableObject {
 
     func isStrokeWidthSelected(_ width: CGFloat) -> Bool {
         selectedStrokeWidth == width
+    }
+
+    func isArrowStyleSelected(_ arrowStyle: AnnotationArrowStyle) -> Bool {
+        selectedArrowStyle == arrowStyle
     }
 
     func isTextSizeSelected(_ size: CGFloat) -> Bool {
@@ -588,6 +618,7 @@ final class EditorViewModel: ObservableObject {
             }
 
             selectedAnnotationID = annotationID
+            syncArrowStyleFromSelectedAnnotation(annotation)
             activeDragSession = .resizing(
                 annotationID: annotationID,
                 handle: handle,
@@ -600,6 +631,7 @@ final class EditorViewModel: ObservableObject {
             }
 
             selectedAnnotationID = annotationID
+            syncArrowStyleFromSelectedAnnotation(annotation)
             activeDragSession = .moving(
                 annotationID: annotationID,
                 startPoint: point,
@@ -1422,8 +1454,17 @@ final class EditorViewModel: ObservableObject {
             lineWidth: selectedStrokeWidth,
             opacity: selectedOpacity,
             fontSize: selectedTextSize,
-            effectIntensity: selectedStrokeWidth
+            effectIntensity: selectedStrokeWidth,
+            arrowStyle: selectedArrowStyle
         )
+    }
+
+    private func syncArrowStyleFromSelectedAnnotation(_ annotation: AnnotationObject) {
+        guard annotation.kind == .arrow else {
+            return
+        }
+
+        selectedArrowStyle = annotation.style.arrowStyle
     }
 
     private func annotation(withID id: UUID) -> AnnotationObject? {

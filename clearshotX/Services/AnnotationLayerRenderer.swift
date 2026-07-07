@@ -215,6 +215,90 @@ final class ArrowAnnotationRenderer: AnnotationShapeRendering {
     }
 
     private func arrowPath(for annotation: AnnotationObject) -> CGPath {
+        switch annotation.style.arrowStyle {
+        case .standard:
+            standardArrowPath(for: annotation)
+        case .fancy:
+            fancyArrowPath(for: annotation)
+        }
+    }
+
+    private func standardArrowPath(for annotation: AnnotationObject) -> CGPath {
+        let path = CGMutablePath()
+
+        guard case let .arrow(start, end) = annotation.geometry else {
+            return path
+        }
+
+        let deltaX = end.x - start.x
+        let deltaY = end.y - start.y
+        let length = hypot(deltaX, deltaY)
+        let unit = length > 0.5
+            ? CGVector(dx: deltaX / length, dy: deltaY / length)
+            : CGVector(dx: 1, dy: 0)
+        let perpendicular = CGVector(dx: -unit.dy, dy: unit.dx)
+
+        let selectedWidth = max(1, annotation.style.lineWidth)
+        let shaftWidth = max(5.5, selectedWidth * 1.85)
+        let shaftHalfWidth = shaftWidth / 2
+        let headWidth = max(42, shaftWidth * 6.2)
+        let headHalfWidth = headWidth / 2
+        let headLength = max(38, headWidth * 0.9)
+        let minimumShaftLength = max(18, shaftWidth * 4.2)
+        let renderLength = max(length, headLength + minimumShaftLength)
+        let renderStart = length >= renderLength
+            ? start
+            : offset(end, along: unit, distance: -renderLength)
+        let headBaseCenter = offset(end, along: unit, distance: -headLength)
+
+        let tailLeft = offset(renderStart, along: perpendicular, distance: shaftHalfWidth)
+        let tailRight = offset(renderStart, along: perpendicular, distance: -shaftHalfWidth)
+        let tailCapControlLeft = offset(
+            offset(renderStart, along: unit, distance: -shaftHalfWidth * 1.35),
+            along: perpendicular,
+            distance: shaftHalfWidth
+        )
+        let tailCapControlRight = offset(
+            offset(renderStart, along: unit, distance: -shaftHalfWidth * 1.35),
+            along: perpendicular,
+            distance: -shaftHalfWidth
+        )
+
+        let leftShaftShoulder = offset(headBaseCenter, along: perpendicular, distance: shaftHalfWidth)
+        let rightShaftShoulder = offset(headBaseCenter, along: perpendicular, distance: -shaftHalfWidth)
+        let leftHeadBase = offset(headBaseCenter, along: perpendicular, distance: headHalfWidth)
+        let rightHeadBase = offset(headBaseCenter, along: perpendicular, distance: -headHalfWidth)
+        let tipRoundness = min(headLength * 0.09, max(3.5, shaftWidth * 0.55))
+        let roundedTipLeft = offset(
+            offset(end, along: unit, distance: -tipRoundness),
+            along: perpendicular,
+            distance: tipRoundness * 0.34
+        )
+        let roundedTipRight = offset(
+            offset(end, along: unit, distance: -tipRoundness),
+            along: perpendicular,
+            distance: -tipRoundness * 0.34
+        )
+
+        path.move(to: tailLeft)
+        path.addLine(to: leftShaftShoulder)
+        path.addLine(to: leftHeadBase)
+        path.addLine(to: roundedTipLeft)
+        path.addQuadCurve(to: roundedTipRight, control: end)
+        path.addLine(to: rightHeadBase)
+        path.addLine(to: rightShaftShoulder)
+        path.addLine(to: tailRight)
+        path.addCurve(
+            to: tailLeft,
+            control1: tailCapControlRight,
+            control2: tailCapControlLeft
+        )
+        path.closeSubpath()
+
+        return path
+    }
+
+    private func fancyArrowPath(for annotation: AnnotationObject) -> CGPath {
         let path = CGMutablePath()
 
         guard case let .arrow(start, end) = annotation.geometry else {

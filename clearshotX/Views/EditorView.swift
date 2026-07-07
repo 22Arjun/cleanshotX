@@ -73,6 +73,9 @@ private struct EditorToolbarView: View {
             toolButtonGroup(EditorToolbarAction.drawingTools)
             colorPalette
             strokeWidthPicker
+            if viewModel.shouldShowArrowStyleMenu {
+                arrowStyleMenu
+            }
             textSizeMenu
             opacityMenu
             Spacer(minLength: 12)
@@ -445,6 +448,40 @@ private struct EditorToolbarView: View {
             }
         }
         .toolbarGroupChrome()
+    }
+
+    private var arrowStyleMenu: some View {
+        Menu {
+            ForEach(AnnotationArrowStyle.allCases) { arrowStyle in
+                Button {
+                    viewModel.setArrowStyle(arrowStyle)
+                } label: {
+                    HStack {
+                        if viewModel.isArrowStyleSelected(arrowStyle) {
+                            Image(systemName: "checkmark")
+                        }
+                        Text(arrowStyle.title)
+                    }
+                }
+            }
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.clear)
+
+                Image(systemName: "arrowshape.right.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: viewModel.selectedStrokeColor).opacity(viewModel.selectedOpacity))
+            }
+            .frame(width: 34, height: 34)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .help("Arrow Style: \(viewModel.selectedArrowStyleTitle)")
+        .accessibilityLabel("Arrow Style")
+        .accessibilityValue(viewModel.selectedArrowStyleTitle)
+        .toolbarGroupChrome()
+        .toolbarCursor(.pointingHand)
     }
 
     private var textSizeMenu: some View {
