@@ -34,6 +34,21 @@ struct EditorCropRatioOption: Identifiable, Equatable {
     let title: String
     let ratio: CGFloat?
     let usesOriginalImageRatio: Bool
+    let usesCustomRatio: Bool
+
+    init(
+        id: String,
+        title: String,
+        ratio: CGFloat?,
+        usesOriginalImageRatio: Bool = false,
+        usesCustomRatio: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.ratio = ratio
+        self.usesOriginalImageRatio = usesOriginalImageRatio
+        self.usesCustomRatio = usesCustomRatio
+    }
 }
 
 struct EditorCropFillColorOption: Identifiable {
@@ -214,11 +229,15 @@ final class EditorViewModel: ObservableObject {
     static let textSizeOptions: [CGFloat] = [16, 24, 32, 44]
     static let opacityOptions: [CGFloat] = [1, 0.75, 0.5]
     static let cropRatioOptions: [EditorCropRatioOption] = [
-        EditorCropRatioOption(id: "freeform", title: "Freeform", ratio: nil, usesOriginalImageRatio: false),
-        EditorCropRatioOption(id: "square", title: "1 : 1 (Square)", ratio: 1, usesOriginalImageRatio: false),
-        EditorCropRatioOption(id: "sixteenNine", title: "16 : 9", ratio: 16 / 9, usesOriginalImageRatio: false),
-        EditorCropRatioOption(id: "fourThree", title: "4 : 3", ratio: 4 / 3, usesOriginalImageRatio: false),
-        EditorCropRatioOption(id: "original", title: "Original", ratio: nil, usesOriginalImageRatio: true)
+        EditorCropRatioOption(id: "custom", title: "Custom Ratio", ratio: nil, usesCustomRatio: true),
+        EditorCropRatioOption(id: "freeform", title: "Freeform", ratio: nil),
+        EditorCropRatioOption(id: "original", title: "Original Ratio", ratio: nil, usesOriginalImageRatio: true),
+        EditorCropRatioOption(id: "square", title: "1 : 1 (Square)", ratio: 1),
+        EditorCropRatioOption(id: "fiveFour", title: "5 : 4 (10 : 8)", ratio: 5 / 4),
+        EditorCropRatioOption(id: "sevenFive", title: "7 : 5", ratio: 7 / 5),
+        EditorCropRatioOption(id: "fourThree", title: "4 : 3", ratio: 4 / 3),
+        EditorCropRatioOption(id: "threeTwo", title: "3 : 2 (6 : 4)", ratio: 3 / 2),
+        EditorCropRatioOption(id: "sixteenNine", title: "16 : 9", ratio: 16 / 9)
     ]
     static let cropFillColorOptions: [EditorCropFillColorOption] = [
         EditorCropFillColorOption(id: "transparent", name: "Transparent", color: .clear),
@@ -247,6 +266,7 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var selectedTextSize: CGFloat = 24
     @Published private(set) var selectedOpacity: CGFloat = 1
     @Published private(set) var selectedCropRatioID = "freeform"
+    @Published private(set) var customCropRatio: CGFloat?
     @Published private(set) var selectedCropFillColorID = "transparent"
     @Published private(set) var isCropGridVisible = false
     @Published private(set) var canUndo = false
@@ -275,7 +295,12 @@ final class EditorViewModel: ObservableObject {
     }
 
     var selectedCropRatioTitle: String {
-        selectedCropRatioOption.title
+        if selectedCropRatioOption.usesCustomRatio,
+           let customCropRatio {
+            return "Custom \(formattedRatioTitle(for: customCropRatio))"
+        }
+
+        return selectedCropRatioOption.title
     }
 
     var cropFramePixelWidth: Int {
@@ -301,7 +326,13 @@ final class EditorViewModel: ObservableObject {
     private var selectedCropRatioOption: EditorCropRatioOption {
         Self.cropRatioOptions.first { option in
             option.id == selectedCropRatioID
-        } ?? Self.cropRatioOptions[0]
+        } ?? Self.defaultCropRatioOption
+    }
+
+    private static var defaultCropRatioOption: EditorCropRatioOption {
+        cropRatioOptions.first { option in
+            option.id == "freeform"
+        } ?? cropRatioOptions[0]
     }
 
     private var selectedCropFillColorOption: EditorCropFillColorOption {
@@ -429,6 +460,10 @@ final class EditorViewModel: ObservableObject {
     }
 
     func setCropRatio(_ option: EditorCropRatioOption) {
+        if option.usesCustomRatio {
+            customCropRatio = currentCropFrameRatio()
+        }
+
         selectedCropRatioID = option.id
         updateCropFrameForSelectedRatio()
     }
@@ -1290,6 +1325,10 @@ final class EditorViewModel: ObservableObject {
     private func selectedCropRatio() -> CGFloat? {
         let option = selectedCropRatioOption
 
+        if option.usesCustomRatio {
+            return customCropRatio ?? currentCropFrameRatio()
+        }
+
         if option.usesOriginalImageRatio {
             let canvasSize = image.editorHistoryCanvasSize
             guard canvasSize.width > 0,
@@ -1302,6 +1341,45 @@ final class EditorViewModel: ObservableObject {
         }
 
         return option.ratio
+    }
+
+    private func currentCropFrameRatio() -> CGFloat? {
+        let rect = (draftCropRect ?? currentCanvasBounds).standardizedForEditor
+        guard rect.width > 0,
+              rect.height > 0
+        else {
+            return nil
+        }
+
+        return rect.width / rect.height
+    }
+
+    private func formattedRatioTitle(for ratio: CGFloat) -> String {
+        guard ratio.isFinite,
+              ratio > 0
+        else {
+            return "Ratio"
+        }
+
+        let denominator: CGFloat = 100
+        let numerator = max(1, round(ratio * denominator))
+        let divisor = greatestCommonDivisor(Int(numerator), Int(denominator))
+        let left = Int(numerator) / divisor
+        let right = Int(denominator) / divisor
+        return "\(left) : \(right)"
+    }
+
+    private func greatestCommonDivisor(_ firstValue: Int, _ secondValue: Int) -> Int {
+        var firstValue = abs(firstValue)
+        var secondValue = abs(secondValue)
+
+        while secondValue != 0 {
+            let remainder = firstValue % secondValue
+            firstValue = secondValue
+            secondValue = remainder
+        }
+
+        return max(firstValue, 1)
     }
 
     private func originalImageCropRatio() -> CGFloat? {
@@ -1323,8 +1401,7 @@ final class EditorViewModel: ObservableObject {
         isCropGridVisible = false
 
         if tool == .crop {
-            selectedCropRatioID = Self.cropRatioOptions[0].id
-            draftCropRect = currentCanvasBounds
+            draftCropRect = adjustedCropFrameForSelectedRatio(from: currentCanvasBounds)
         } else {
             draftCropRect = nil
         }

@@ -54,18 +54,17 @@ private struct EditorToolbarView: View {
         .padding(.horizontal, 16)
         .frame(height: 62)
         .background {
-            ToolbarArrowCursorRegion()
-                .background(.regularMaterial)
+            Rectangle()
+                .fill(.regularMaterial)
                 .overlay(alignment: .bottom) {
                     Rectangle()
                         .fill(Color(nsColor: .separatorColor).opacity(0.72))
                         .frame(height: 1)
                 }
         }
-        .onHover { isHovering in
-            if isHovering {
-                NSCursor.arrow.set()
-            }
+        .overlay {
+            EditorToolbarCursorShield()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -114,6 +113,7 @@ private struct EditorToolbarView: View {
                 .editorKeyboardShortcut(for: action)
                 .accessibilityLabel(action.title)
                 .accessibilityHint("Shortcut \(action.shortcutHint)")
+                .toolbarCursor(viewModel.isEnabled(action) ? .pointingHand : .arrow)
             }
         }
         .toolbarGroupChrome()
@@ -121,17 +121,30 @@ private struct EditorToolbarView: View {
 
     private var cropRatioMenu: some View {
         Menu {
-            Text("Custom Ratio")
-
-            Button {
-                viewModel.setCropRatio(EditorViewModel.cropRatioOptions[0])
-            } label: {
-                cropRatioMenuItem(EditorViewModel.cropRatioOptions[0])
+            if let customOption = cropRatioOption(id: "custom") {
+                Button {
+                    viewModel.setCropRatio(customOption)
+                } label: {
+                    cropRatioMenuItem(customOption)
+                }
+                .help("Lock the crop frame to its current ratio")
             }
 
             Divider()
 
-            ForEach(EditorViewModel.cropRatioOptions.dropFirst()) { option in
+            if let freeformOption = cropRatioOption(id: "freeform") {
+                Button {
+                    viewModel.setCropRatio(freeformOption)
+                } label: {
+                    cropRatioMenuItem(freeformOption)
+                }
+            }
+
+            Divider()
+
+            ForEach(EditorViewModel.cropRatioOptions.filter { option in
+                option.id != "custom" && option.id != "freeform"
+            }) { option in
                 Button {
                     viewModel.setCropRatio(option)
                 } label: {
@@ -163,6 +176,13 @@ private struct EditorToolbarView: View {
         .accessibilityLabel("Crop Ratio")
         .accessibilityValue(viewModel.selectedCropRatioTitle)
         .toolbarGroupChrome()
+        .toolbarCursor(.pointingHand)
+    }
+
+    private func cropRatioOption(id: String) -> EditorCropRatioOption? {
+        EditorViewModel.cropRatioOptions.first { option in
+            option.id == id
+        }
     }
 
     private func cropRatioMenuItem(_ option: EditorCropRatioOption) -> some View {
@@ -191,6 +211,7 @@ private struct EditorToolbarView: View {
             .editorKeyboardShortcut(for: .crop)
             .accessibilityLabel("Exit Crop Mode")
             .accessibilityHint("Return to annotation tools")
+            .toolbarCursor(.pointingHand)
         }
         .toolbarGroupChrome()
     }
@@ -243,6 +264,7 @@ private struct EditorToolbarView: View {
             .help("\(accessibilityLabel) in pixels")
             .accessibilityLabel(accessibilityLabel)
             .accessibilityValue("\(value.wrappedValue) pixels")
+            .toolbarCursor(.iBeam)
     }
 
     private var cropCanvasColorMenu: some View {
@@ -273,6 +295,7 @@ private struct EditorToolbarView: View {
         .accessibilityLabel("Canvas Fill Color")
         .accessibilityValue(viewModel.selectedCropFillColorName)
         .toolbarGroupChrome()
+        .toolbarCursor(.pointingHand)
     }
 
     private var cropTransformControls: some View {
@@ -289,6 +312,7 @@ private struct EditorToolbarView: View {
             .buttonStyle(EditorToolbarButtonStyle(isSelected: false))
             .help("Rotate 90° Clockwise")
             .accessibilityLabel("Rotate 90 Degrees Clockwise")
+            .toolbarCursor(.pointingHand)
 
             Button {
                 viewModel.flipCropImageHorizontally()
@@ -302,6 +326,7 @@ private struct EditorToolbarView: View {
             .buttonStyle(EditorToolbarButtonStyle(isSelected: false))
             .help("Flip Horizontally")
             .accessibilityLabel("Flip Horizontally")
+            .toolbarCursor(.pointingHand)
 
             Button {
                 viewModel.flipCropImageVertically()
@@ -315,6 +340,7 @@ private struct EditorToolbarView: View {
             .buttonStyle(EditorToolbarButtonStyle(isSelected: false))
             .help("Flip Vertically")
             .accessibilityLabel("Flip Vertically")
+            .toolbarCursor(.pointingHand)
         }
         .toolbarGroupChrome()
     }
@@ -381,6 +407,7 @@ private struct EditorToolbarView: View {
                 .buttonStyle(EditorPaletteButtonStyle(isSelected: viewModel.isStrokeColorSelected(option)))
                 .help("Stroke Color: \(option.name)")
                 .accessibilityLabel("Stroke Color \(option.name)")
+                .toolbarCursor(.pointingHand)
             }
         }
         .toolbarGroupChrome()
@@ -414,6 +441,7 @@ private struct EditorToolbarView: View {
                 .buttonStyle(EditorPaletteButtonStyle(isSelected: viewModel.isStrokeWidthSelected(width)))
                 .help(viewModel.activeTool == .blurPixelate ? "Pixelate Strength: \(Int(width))" : "Stroke Width: \(Int(width))")
                 .accessibilityLabel(viewModel.activeTool == .blurPixelate ? "Pixelate Strength \(Int(width))" : "Stroke Width \(Int(width))")
+                .toolbarCursor(.pointingHand)
             }
         }
         .toolbarGroupChrome()
@@ -450,6 +478,7 @@ private struct EditorToolbarView: View {
         .accessibilityLabel("Text Size")
         .accessibilityValue("\(Int(viewModel.selectedTextSize)) points")
         .toolbarGroupChrome()
+        .toolbarCursor(.pointingHand)
     }
 
     private var opacityMenu: some View {
@@ -483,6 +512,7 @@ private struct EditorToolbarView: View {
         .accessibilityLabel("Opacity")
         .accessibilityValue("\(Int(viewModel.selectedOpacity * 100)) percent")
         .toolbarGroupChrome()
+        .toolbarCursor(.pointingHand)
     }
 }
 
@@ -497,6 +527,30 @@ private extension View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
             }
+    }
+
+    func toolbarCursor(_ cursor: EditorToolbarCursorKind) -> some View {
+        overlay {
+            EditorToolbarCursorRegion(cursor: cursor.nsCursor)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+private enum EditorToolbarCursorKind: Equatable {
+    case arrow
+    case pointingHand
+    case iBeam
+
+    var nsCursor: NSCursor {
+        switch self {
+        case .arrow:
+            .arrow
+        case .pointingHand:
+            .pointingHand
+        case .iBeam:
+            .iBeam
+        }
     }
 }
 
@@ -563,48 +617,301 @@ private struct EditorPaletteButtonStyle: ButtonStyle {
     }
 }
 
-private struct ToolbarArrowCursorRegion: NSViewRepresentable {
-    func makeNSView(context: Context) -> ToolbarArrowCursorNSView {
-        ToolbarArrowCursorNSView()
+private struct EditorToolbarCursorShield: NSViewRepresentable {
+    func makeNSView(context: Context) -> EditorToolbarCursorShieldNSView {
+        EditorToolbarCursorShieldNSView()
     }
 
-    func updateNSView(_ nsView: ToolbarArrowCursorNSView, context: Context) {}
+    func updateNSView(_ nsView: EditorToolbarCursorShieldNSView, context: Context) {}
 }
 
-private final class ToolbarArrowCursorNSView: NSView {
-    private var cursorTrackingArea: NSTrackingArea?
+private final class EditorToolbarCursorShieldNSView: NSView {
+    private var localMouseMonitor: Any?
+    private var trackingArea: NSTrackingArea?
+
+    deinit {
+        removeLocalMouseMonitor()
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        removeLocalMouseMonitor()
+
+        guard window != nil else {
+            return
+        }
+
+        window?.acceptsMouseMovedEvents = true
+        window?.invalidateCursorRects(for: self)
+
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [
+                .mouseMoved,
+                .leftMouseDown,
+                .leftMouseDragged,
+                .leftMouseUp,
+                .rightMouseDown,
+                .rightMouseDragged,
+                .rightMouseUp,
+                .otherMouseDown,
+                .otherMouseDragged,
+                .otherMouseUp
+            ]
+        ) { [weak self] event in
+            self?.updateToolbarCursor(for: event)
+            return event
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        window?.invalidateCursorRects(for: self)
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
 
-        if let cursorTrackingArea {
-            removeTrackingArea(cursorTrackingArea)
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
         }
 
         let trackingArea = NSTrackingArea(
             rect: bounds,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .mouseMoved, .inVisibleRect],
+            options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .inVisibleRect],
             owner: self
         )
         addTrackingArea(trackingArea)
-        cursorTrackingArea = trackingArea
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        NSCursor.arrow.set()
+        self.trackingArea = trackingArea
     }
 
     override func mouseMoved(with event: NSEvent) {
-        NSCursor.arrow.set()
+        updateToolbarCursor(for: event)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        updateToolbarCursor(for: event)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        updateToolbarCursor(for: event)
     }
 
     override func resetCursorRects() {
         super.resetCursorRects()
         addCursorRect(bounds, cursor: .arrow)
+    }
+
+    private func updateToolbarCursor(for event: NSEvent) {
+        guard let window,
+              event.window === window
+        else {
+            return
+        }
+
+        let point = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(point) else {
+            return
+        }
+
+        setCursor(cursorForToolbar(atWindowPoint: event.locationInWindow))
+        scheduleToolbarCursorUpdateAfterEventDispatch(for: event.window)
+    }
+
+    private func cursorForToolbar(atWindowPoint windowPoint: CGPoint) -> NSCursor {
+        // Crop/canvas code uses crosshair, but the toolbar is its own cursor zone:
+        // only arrow, pointing-hand, and text insertion cursors are valid here.
+        if let cursorRegion = cursorRegion(atWindowPoint: windowPoint) {
+            return sanitizedToolbarCursor(cursorRegion.cursor)
+        }
+
+        if let appKitCursor = cursorForNativeControl(atWindowPoint: windowPoint) {
+            return sanitizedToolbarCursor(appKitCursor)
+        }
+
+        return .arrow
+    }
+
+    private func scheduleToolbarCursorUpdateAfterEventDispatch(for eventWindow: NSWindow?) {
+        DispatchQueue.main.async { [weak self, weak eventWindow] in
+            guard let self,
+                  let eventWindow,
+                  eventWindow === self.window
+            else {
+                return
+            }
+
+            let currentWindowPoint = eventWindow.mouseLocationOutsideOfEventStream
+            let currentPoint = self.convert(currentWindowPoint, from: nil)
+            guard self.bounds.contains(currentPoint) else {
+                return
+            }
+
+            self.setCursor(self.cursorForToolbar(atWindowPoint: currentWindowPoint))
+        }
+    }
+
+    private func cursorRegion(atWindowPoint windowPoint: CGPoint) -> EditorToolbarCursorRegionNSView? {
+        guard let contentView = window?.contentView else {
+            return nil
+        }
+
+        return cursorRegion(atWindowPoint: windowPoint, in: contentView)
+    }
+
+    private func cursorRegion(
+        atWindowPoint windowPoint: CGPoint,
+        in view: NSView
+    ) -> EditorToolbarCursorRegionNSView? {
+        for subview in view.subviews.reversed() {
+            if let region = cursorRegion(atWindowPoint: windowPoint, in: subview) {
+                return region
+            }
+        }
+
+        guard let region = view as? EditorToolbarCursorRegionNSView,
+              !region.isHidden,
+              region.alphaValue > 0,
+              region.window === window
+        else {
+            return nil
+        }
+
+        let point = region.convert(windowPoint, from: nil)
+        return region.bounds.contains(point) ? region : nil
+    }
+
+    private func cursorForNativeControl(atWindowPoint windowPoint: CGPoint) -> NSCursor? {
+        guard let contentView = window?.contentView else {
+            return nil
+        }
+
+        let contentPoint = contentView.convert(windowPoint, from: nil)
+        guard let hitView = contentView.hitTest(contentPoint) else {
+            return nil
+        }
+
+        if hitView.hasSuperview(ofType: NSTextField.self) ||
+            hitView.hasSuperview(ofType: NSTextView.self) {
+            return .iBeam
+        }
+
+        if hitView.hasSuperview(ofType: NSButton.self) ||
+            hitView.hasClassName(containing: "Button") ||
+            hitView.hasClassName(containing: "Menu") ||
+            hitView.hasClassName(containing: "PopUp") {
+            return .pointingHand
+        }
+
+        return nil
+    }
+
+    private func setCursor(_ cursor: NSCursor) {
+        sanitizedToolbarCursor(cursor).set()
+    }
+
+    @discardableResult
+    static func applyToolbarCursorIfNeeded(
+        in window: NSWindow?,
+        at windowPoint: CGPoint
+    ) -> Bool {
+        guard let window,
+              let contentView = window.contentView,
+              let shield = toolbarShield(
+                atWindowPoint: windowPoint,
+                in: contentView,
+                window: window
+              )
+        else {
+            return false
+        }
+
+        shield.setCursor(shield.cursorForToolbar(atWindowPoint: windowPoint))
+        return true
+    }
+
+    private static func toolbarShield(
+        atWindowPoint windowPoint: CGPoint,
+        in view: NSView,
+        window: NSWindow
+    ) -> EditorToolbarCursorShieldNSView? {
+        for subview in view.subviews.reversed() {
+            if let shield = toolbarShield(atWindowPoint: windowPoint, in: subview, window: window) {
+                return shield
+            }
+        }
+
+        guard let shield = view as? EditorToolbarCursorShieldNSView,
+              shield.window === window,
+              !shield.isHidden,
+              shield.alphaValue > 0
+        else {
+            return nil
+        }
+
+        let point = shield.convert(windowPoint, from: nil)
+        return shield.bounds.contains(point) ? shield : nil
+    }
+
+    private func sanitizedToolbarCursor(_ cursor: NSCursor) -> NSCursor {
+        if cursor === NSCursor.pointingHand {
+            return .pointingHand
+        }
+
+        if cursor === NSCursor.iBeam {
+            return .iBeam
+        }
+
+        return .arrow
+    }
+
+    private func removeLocalMouseMonitor() {
+        guard let localMouseMonitor else {
+            return
+        }
+
+        NSEvent.removeMonitor(localMouseMonitor)
+        self.localMouseMonitor = nil
+    }
+}
+
+private struct EditorToolbarCursorRegion: NSViewRepresentable {
+    let cursor: NSCursor
+
+    func makeNSView(context: Context) -> EditorToolbarCursorRegionNSView {
+        EditorToolbarCursorRegionNSView(cursor: cursor)
+    }
+
+    func updateNSView(_ nsView: EditorToolbarCursorRegionNSView, context: Context) {
+        nsView.cursor = cursor
+    }
+}
+
+private final class EditorToolbarCursorRegionNSView: NSView {
+    var cursor: NSCursor {
+        didSet {}
+    }
+
+    init(cursor: NSCursor) {
+        self.cursor = cursor
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }
 
@@ -775,7 +1082,7 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
     }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: cursor(for: nil))
+        addCursorRect(bounds, cursor: .arrow)
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -787,9 +1094,15 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
         }
 
         if activeTool == .crop {
-            cursorForCropFrame(at: cropPoint(from: viewPoint)).set()
+            setCanvasCursor(
+                cursorForCropFrame(at: cropPoint(from: viewPoint)),
+                atWindowPoint: event.locationInWindow
+            )
         } else {
-            cursor(for: imagePoint(from: viewPoint, clamped: false)).set()
+            setCanvasCursor(
+                cursor(for: imagePoint(from: viewPoint, clamped: false)),
+                atWindowPoint: event.locationInWindow
+            )
         }
     }
 
@@ -1308,7 +1621,7 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
         renderAnnotationLayers()
         renderCropOverlay()
         updateActiveTextEditorFrame()
-        cursor(for: nil).set()
+        updateCursorForCurrentMouseLocation()
     }
 
     private func renderAnnotationLayers() {
@@ -1678,6 +1991,43 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
         return rawPoint.clamped(to: annotationContainerLayer.bounds)
     }
 
+    private func updateCursorForCurrentMouseLocation() {
+        guard let window else {
+            NSCursor.arrow.set()
+            return
+        }
+
+        let windowPoint = window.mouseLocationOutsideOfEventStream
+        let viewPoint = convert(windowPoint, from: nil)
+        guard bounds.contains(viewPoint) else {
+            if EditorToolbarCursorShieldNSView.applyToolbarCursorIfNeeded(in: window, at: windowPoint) {
+                return
+            }
+
+            NSCursor.arrow.set()
+            return
+        }
+
+        if cropActionButtonContains(viewPoint) {
+            NSCursor.pointingHand.set()
+            return
+        }
+
+        if activeTool == .crop {
+            setCanvasCursor(cursorForCropFrame(at: cropPoint(from: viewPoint)), atWindowPoint: windowPoint)
+        } else {
+            setCanvasCursor(cursor(for: imagePoint(from: viewPoint, clamped: false)), atWindowPoint: windowPoint)
+        }
+    }
+
+    private func setCanvasCursor(_ cursor: NSCursor, atWindowPoint windowPoint: CGPoint) {
+        if EditorToolbarCursorShieldNSView.applyToolbarCursorIfNeeded(in: window, at: windowPoint) {
+            return
+        }
+
+        cursor.set()
+    }
+
     private func viewRect(forImageRect imageRect: CGRect) -> CGRect {
         CGRect(
             x: imageFrameInView.minX + imageRect.minX * imageDisplayScale,
@@ -1870,6 +2220,36 @@ private extension NSImage {
         }
 
         return NSSize(width: cgImage.width, height: cgImage.height)
+    }
+}
+
+private extension NSView {
+    func hasSuperview<T: NSView>(ofType type: T.Type) -> Bool {
+        var view: NSView? = self
+
+        while let currentView = view {
+            if currentView is T {
+                return true
+            }
+
+            view = currentView.superview
+        }
+
+        return false
+    }
+
+    func hasClassName(containing fragment: String) -> Bool {
+        var view: NSView? = self
+
+        while let currentView = view {
+            if NSStringFromClass(type(of: currentView)).localizedCaseInsensitiveContains(fragment) {
+                return true
+            }
+
+            view = currentView.superview
+        }
+
+        return false
     }
 }
 
