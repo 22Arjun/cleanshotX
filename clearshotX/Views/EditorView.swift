@@ -54,8 +54,8 @@ private struct EditorToolbarView: View {
         .padding(.horizontal, 16)
         .frame(height: 62)
         .background {
-            Rectangle()
-                .fill(.regularMaterial)
+            ToolbarArrowCursorRegion()
+                .background(.regularMaterial)
                 .overlay(alignment: .bottom) {
                     Rectangle()
                         .fill(Color(nsColor: .separatorColor).opacity(0.72))
@@ -251,48 +251,28 @@ private struct EditorToolbarView: View {
                 Button {
                     viewModel.setCropFillColor(option)
                 } label: {
-                    HStack {
-                        if viewModel.isCropFillColorSelected(option) {
-                            Image(systemName: "checkmark")
-                        }
-
-                        Text(option.name)
+                    Label {
+                        Text(viewModel.isCropFillColorSelected(option) ? "✓ \(option.name)" : "  \(option.name)")
+                    } icon: {
+                        Image(nsImage: cropFillSwatchImage(color: option.color, size: 16))
+                            .renderingMode(.original)
                     }
                 }
             }
         } label: {
-            HStack(spacing: 6) {
-                cropFillSwatch(color: viewModel.selectedCropFillColor)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
-            }
-            .frame(width: 52, height: 34)
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            Image(nsImage: cropFillSwatchImage(color: viewModel.selectedCropFillColor, size: 24))
+                .renderingMode(.original)
+                .interpolation(.high)
+                .frame(width: 24, height: 24)
+                .frame(width: 34, height: 34)
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .help("Canvas Fill Color: \(viewModel.selectedCropFillColorName)")
         .accessibilityLabel("Canvas Fill Color")
         .accessibilityValue(viewModel.selectedCropFillColorName)
         .toolbarGroupChrome()
-    }
-
-    private func cropFillSwatch(color: NSColor) -> some View {
-        ZStack {
-            Circle()
-                .fill(Color(nsColor: color))
-
-            if color.alphaComponent <= 0.01 {
-                Image(systemName: "slash")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
-            }
-
-            Circle()
-                .stroke(Color(nsColor: .separatorColor).opacity(0.82), lineWidth: 1)
-        }
-        .frame(width: 18, height: 18)
     }
 
     private var cropTransformControls: some View {
@@ -583,6 +563,97 @@ private struct EditorPaletteButtonStyle: ButtonStyle {
     }
 }
 
+private struct ToolbarArrowCursorRegion: NSViewRepresentable {
+    func makeNSView(context: Context) -> ToolbarArrowCursorNSView {
+        ToolbarArrowCursorNSView()
+    }
+
+    func updateNSView(_ nsView: ToolbarArrowCursorNSView, context: Context) {}
+}
+
+private final class ToolbarArrowCursorNSView: NSView {
+    private var cursorTrackingArea: NSTrackingArea?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+
+        if let cursorTrackingArea {
+            removeTrackingArea(cursorTrackingArea)
+        }
+
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .mouseMoved, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(trackingArea)
+        cursorTrackingArea = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        NSCursor.arrow.set()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        NSCursor.arrow.set()
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .arrow)
+    }
+}
+
+private func cropFillSwatchImage(color: NSColor, size: CGFloat) -> NSImage {
+    let image = NSImage(size: NSSize(width: size, height: size))
+    let rect = CGRect(x: 0, y: 0, width: size, height: size)
+    let circleRect = rect.insetBy(dx: 1.5, dy: 1.5)
+    let circlePath = NSBezierPath(ovalIn: circleRect)
+    image.isTemplate = false
+
+    image.lockFocus()
+    NSGraphicsContext.current?.imageInterpolation = .high
+    NSColor.clear.setFill()
+    rect.fill()
+
+    if color.alphaComponent <= 0.01 {
+        NSGraphicsContext.saveGraphicsState()
+        circlePath.addClip()
+        let tileSize = max(3, size / 4)
+        let columns = Int(ceil(size / tileSize))
+        let rows = Int(ceil(size / tileSize))
+
+        for row in 0..<rows {
+            for column in 0..<columns {
+                let isLightTile = (row + column).isMultiple(of: 2)
+                let tileRect = CGRect(
+                    x: CGFloat(column) * tileSize,
+                    y: CGFloat(row) * tileSize,
+                    width: tileSize,
+                    height: tileSize
+                )
+                (isLightTile ? NSColor.textBackgroundColor : NSColor.separatorColor.withAlphaComponent(0.72)).setFill()
+                tileRect.fill()
+            }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+    } else {
+        color.setFill()
+        circlePath.fill()
+    }
+
+    NSColor.separatorColor.withAlphaComponent(0.88).setStroke()
+    circlePath.lineWidth = 1
+    circlePath.stroke()
+    image.unlockFocus()
+
+    return image
+}
+
 private struct EditorCanvasView: NSViewRepresentable {
     let viewModel: EditorViewModel
     let image: NSImage
@@ -696,7 +767,7 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
 
         let trackingArea = NSTrackingArea(
             rect: bounds,
-            options: [.activeInKeyWindow, .mouseMoved, .inVisibleRect],
+            options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
             owner: self
         )
         addTrackingArea(trackingArea)
@@ -720,6 +791,10 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
         } else {
             cursor(for: imagePoint(from: viewPoint, clamped: false)).set()
         }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.arrow.set()
     }
 
     override func mouseDown(with event: NSEvent) {

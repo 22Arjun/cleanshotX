@@ -223,7 +223,14 @@ final class EditorViewModel: ObservableObject {
     static let cropFillColorOptions: [EditorCropFillColorOption] = [
         EditorCropFillColorOption(id: "transparent", name: "Transparent", color: .clear),
         EditorCropFillColorOption(id: "black", name: "Black", color: .black),
-        EditorCropFillColorOption(id: "white", name: "White", color: .white)
+        EditorCropFillColorOption(id: "white", name: "White", color: .white),
+        EditorCropFillColorOption(id: "red", name: "Red", color: .systemRed),
+        EditorCropFillColorOption(id: "orange", name: "Orange", color: .systemOrange),
+        EditorCropFillColorOption(id: "yellow", name: "Yellow", color: .systemYellow),
+        EditorCropFillColorOption(id: "green", name: "Green", color: .systemGreen),
+        EditorCropFillColorOption(id: "blue", name: "Blue", color: .systemBlue),
+        EditorCropFillColorOption(id: "purple", name: "Purple", color: .systemPurple),
+        EditorCropFillColorOption(id: "gray", name: "Gray", color: .systemGray)
     ]
 
     let id = UUID()
