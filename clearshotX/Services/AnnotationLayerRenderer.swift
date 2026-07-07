@@ -239,55 +239,99 @@ final class ArrowAnnotationRenderer: AnnotationShapeRendering {
         let perpendicular = CGVector(dx: -unit.dy, dy: unit.dx)
 
         let selectedWidth = max(1, annotation.style.lineWidth)
-        let shaftWidth = max(5.5, selectedWidth * 1.85)
-        let shaftHalfWidth = shaftWidth / 2
-        let headWidth = max(42, shaftWidth * 6.2)
+        let tailWidth = max(5.5, selectedWidth * 1.45)
+        let tailHalfWidth = tailWidth / 2
+        let neckWidth = max(18, selectedWidth * 4.1)
+        let neckHalfWidth = neckWidth / 2
+        let headWidth = max(68, neckWidth * 3.35)
         let headHalfWidth = headWidth / 2
-        let headLength = max(38, headWidth * 0.9)
-        let minimumShaftLength = max(18, shaftWidth * 4.2)
+        let headLength = max(58, headWidth * 0.82)
+        let minimumShaftLength = max(36, neckWidth * 3.2)
         let renderLength = max(length, headLength + minimumShaftLength)
         let renderStart = length >= renderLength
             ? start
             : offset(end, along: unit, distance: -renderLength)
         let headBaseCenter = offset(end, along: unit, distance: -headLength)
+        let neckCenter = headBaseCenter
 
-        let tailLeft = offset(renderStart, along: perpendicular, distance: shaftHalfWidth)
-        let tailRight = offset(renderStart, along: perpendicular, distance: -shaftHalfWidth)
+        let tailLeft = offset(renderStart, along: perpendicular, distance: tailHalfWidth)
+        let tailRight = offset(renderStart, along: perpendicular, distance: -tailHalfWidth)
         let tailCapControlLeft = offset(
-            offset(renderStart, along: unit, distance: -shaftHalfWidth * 1.35),
+            offset(renderStart, along: unit, distance: -tailHalfWidth * 1.35),
             along: perpendicular,
-            distance: shaftHalfWidth
+            distance: tailHalfWidth
         )
         let tailCapControlRight = offset(
-            offset(renderStart, along: unit, distance: -shaftHalfWidth * 1.35),
+            offset(renderStart, along: unit, distance: -tailHalfWidth * 1.35),
             along: perpendicular,
-            distance: -shaftHalfWidth
+            distance: -tailHalfWidth
         )
 
-        let leftShaftShoulder = offset(headBaseCenter, along: perpendicular, distance: shaftHalfWidth)
-        let rightShaftShoulder = offset(headBaseCenter, along: perpendicular, distance: -shaftHalfWidth)
+        let leftNeck = offset(neckCenter, along: perpendicular, distance: neckHalfWidth)
+        let rightNeck = offset(neckCenter, along: perpendicular, distance: -neckHalfWidth)
         let leftHeadBase = offset(headBaseCenter, along: perpendicular, distance: headHalfWidth)
         let rightHeadBase = offset(headBaseCenter, along: perpendicular, distance: -headHalfWidth)
-        let tipRoundness = min(headLength * 0.09, max(3.5, shaftWidth * 0.55))
+        let baseCornerRadius = min(headHalfWidth * 0.16, max(8, neckWidth * 0.34))
+        let leftBaseInner = offset(headBaseCenter, along: perpendicular, distance: neckHalfWidth)
+        let rightBaseInner = offset(headBaseCenter, along: perpendicular, distance: -neckHalfWidth)
+        let leftBaseCornerStart = offset(leftHeadBase, along: perpendicular, distance: -baseCornerRadius)
+        let leftBaseCornerEnd = offset(
+            offset(leftHeadBase, along: unit, distance: baseCornerRadius * 0.82),
+            along: perpendicular,
+            distance: -baseCornerRadius * 0.34
+        )
+        let rightBaseCornerStart = offset(
+            offset(rightHeadBase, along: unit, distance: baseCornerRadius * 0.82),
+            along: perpendicular,
+            distance: baseCornerRadius * 0.34
+        )
+        let rightBaseCornerEnd = offset(rightHeadBase, along: perpendicular, distance: baseCornerRadius)
+        let tipRoundness = min(headLength * 0.12, max(5.5, neckWidth * 0.22))
         let roundedTipLeft = offset(
             offset(end, along: unit, distance: -tipRoundness),
             along: perpendicular,
-            distance: tipRoundness * 0.34
+            distance: tipRoundness * 0.38
         )
         let roundedTipRight = offset(
             offset(end, along: unit, distance: -tipRoundness),
             along: perpendicular,
-            distance: -tipRoundness * 0.34
+            distance: -tipRoundness * 0.38
+        )
+
+        let shaftLength = max(1, hypot(neckCenter.x - renderStart.x, neckCenter.y - renderStart.y))
+        let leftShaftControlA = offset(
+            offset(renderStart, along: unit, distance: shaftLength * 0.34),
+            along: perpendicular,
+            distance: tailHalfWidth * 1.08
+        )
+        let leftShaftControlB = offset(
+            offset(neckCenter, along: unit, distance: -shaftLength * 0.24),
+            along: perpendicular,
+            distance: neckHalfWidth * 0.82
+        )
+        let rightShaftControlA = offset(
+            offset(neckCenter, along: unit, distance: -shaftLength * 0.24),
+            along: perpendicular,
+            distance: -neckHalfWidth * 0.82
+        )
+        let rightShaftControlB = offset(
+            offset(renderStart, along: unit, distance: shaftLength * 0.34),
+            along: perpendicular,
+            distance: -tailHalfWidth * 1.08
         )
 
         path.move(to: tailLeft)
-        path.addLine(to: leftShaftShoulder)
-        path.addLine(to: leftHeadBase)
+        path.addCurve(to: leftNeck, control1: leftShaftControlA, control2: leftShaftControlB)
+        path.addLine(to: leftBaseInner)
+        path.addLine(to: leftBaseCornerStart)
+        path.addQuadCurve(to: leftBaseCornerEnd, control: leftHeadBase)
         path.addLine(to: roundedTipLeft)
         path.addQuadCurve(to: roundedTipRight, control: end)
-        path.addLine(to: rightHeadBase)
-        path.addLine(to: rightShaftShoulder)
-        path.addLine(to: tailRight)
+        path.addLine(to: rightBaseCornerStart)
+        path.addQuadCurve(to: rightBaseCornerEnd, control: rightHeadBase)
+        path.addLine(to: rightBaseInner)
+        path.addLine(to: rightNeck)
+        path.addCurve(to: tailRight, control1: rightShaftControlA, control2: rightShaftControlB)
         path.addCurve(
             to: tailLeft,
             control1: tailCapControlRight,
