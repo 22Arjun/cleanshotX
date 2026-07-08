@@ -552,6 +552,10 @@ final class EditorViewModel: ObservableObject {
         }
 
         selectedPixelateIntensity = normalizedIntensity
+        NSHapticFeedbackManager.defaultPerformer.perform(
+            .levelChange,
+            performanceTime: .now
+        )
 
         if applyActiveStyleToSelectedAnnotation(only: .blurPixelate),
            pixelateIntensityEditingInitialState == nil {
