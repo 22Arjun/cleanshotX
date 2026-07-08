@@ -11,6 +11,7 @@ import Foundation
 enum AnnotationObjectKind: String, CaseIterable, Identifiable {
     case arrow
     case line
+    case numbering
     case rectangle
     case filledRectangle
     case oval
@@ -403,6 +404,7 @@ struct AnnotationObject: Identifiable, Equatable {
     var kind: AnnotationObjectKind
     var geometry: AnnotationGeometry
     var style: AnnotationStyle
+    var number: Int?
 
     var bounds: CGRect {
         geometry.bounds
@@ -412,12 +414,14 @@ struct AnnotationObject: Identifiable, Equatable {
         id: UUID = UUID(),
         kind: AnnotationObjectKind,
         geometry: AnnotationGeometry,
-        style: AnnotationStyle = AnnotationStyle()
+        style: AnnotationStyle = AnnotationStyle(),
+        number: Int? = nil
     ) {
         self.id = id
         self.kind = kind
         self.geometry = geometry
         self.style = style
+        self.number = number
     }
 
     static func arrow(
@@ -446,6 +450,33 @@ struct AnnotationObject: Identifiable, Equatable {
             geometry: .arrow(start: start, end: end),
             style: style
         )
+    }
+
+    static func numberingBadge(
+        id: UUID = UUID(),
+        center: CGPoint,
+        number: Int,
+        style: AnnotationStyle
+    ) -> AnnotationObject {
+        let diameter = numberingBadgeDiameter(for: style.lineWidth)
+        return AnnotationObject(
+            id: id,
+            kind: .numbering,
+            geometry: .oval(
+                CGRect(
+                    x: center.x - diameter / 2,
+                    y: center.y - diameter / 2,
+                    width: diameter,
+                    height: diameter
+                )
+            ),
+            style: style,
+            number: number
+        )
+    }
+
+    static func numberingBadgeDiameter(for strokeWidth: CGFloat) -> CGFloat {
+        32 + min(max(strokeWidth, 2), 8) * 4
     }
 
     static func rectangle(
@@ -560,6 +591,20 @@ struct AnnotationObject: Identifiable, Equatable {
     func applyingStyle(_ style: AnnotationStyle) -> AnnotationObject {
         var object = self
         object.style = style
+
+        if kind == .numbering,
+           case let .oval(rect) = geometry {
+            let diameter = Self.numberingBadgeDiameter(for: style.lineWidth)
+            object.geometry = .oval(
+                CGRect(
+                    x: rect.midX - diameter / 2,
+                    y: rect.midY - diameter / 2,
+                    width: diameter,
+                    height: diameter
+                )
+            )
+        }
+
         return object
     }
 

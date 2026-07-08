@@ -29,6 +29,7 @@ final class AnnotationRendererRegistry {
     init(renderers: [AnnotationShapeRendering] = [
         ArrowAnnotationRenderer(),
         LineAnnotationRenderer(),
+        NumberingAnnotationRenderer(),
         RectangleAnnotationRenderer(),
         FilledRectangleAnnotationRenderer(),
         OvalAnnotationRenderer(),
@@ -544,6 +545,107 @@ final class LineAnnotationRenderer: AnnotationShapeRendering {
         path.move(to: start)
         path.addLine(to: end)
         return path
+    }
+}
+
+final class NumberingAnnotationRenderer: AnnotationShapeRendering {
+    let kind = AnnotationObjectKind.numbering
+
+    func makeLayer(for annotation: AnnotationObject, context: AnnotationRenderContext) -> CALayer {
+        let container = CALayer()
+        container.frame = CGRect(origin: .zero, size: context.canvasSize)
+        container.opacity = Float(annotation.style.opacity)
+
+        let badgePath = badgePath(for: annotation)
+        let badgeLayer = CAShapeLayer()
+        badgeLayer.frame = container.bounds
+        badgeLayer.path = badgePath
+        badgeLayer.fillColor = annotation.style.strokeColor.cgColor
+        badgeLayer.strokeColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        badgeLayer.lineWidth = 1
+        badgeLayer.shadowColor = NSColor.black.cgColor
+        badgeLayer.shadowOpacity = 0.22
+        badgeLayer.shadowRadius = 3
+        badgeLayer.shadowOffset = CGSize(width: 0, height: 1.5)
+        badgeLayer.shadowPath = badgePath
+        badgeLayer.allowsEdgeAntialiasing = true
+        container.addSublayer(badgeLayer)
+
+        guard let number = annotation.number else {
+            return container
+        }
+
+        let rect = badgeRect(for: annotation)
+        let textLayer = CATextLayer()
+        textLayer.frame = textFrame(for: rect)
+        textLayer.string = attributedNumber(number, in: rect)
+        textLayer.alignmentMode = .center
+        textLayer.truncationMode = .none
+        textLayer.isWrapped = false
+        textLayer.contentsGravity = .center
+        textLayer.contentsScale = 2
+        textLayer.allowsEdgeAntialiasing = true
+        container.addSublayer(textLayer)
+        return container
+    }
+
+    func hitTest(_ point: CGPoint, annotation: AnnotationObject, tolerance: CGFloat) -> Bool {
+        let rect = badgeRect(for: annotation).insetBy(dx: -tolerance, dy: -tolerance)
+        guard rect.width > 0, rect.height > 0 else {
+            return false
+        }
+
+        let normalizedX = (point.x - rect.midX) / (rect.width / 2)
+        let normalizedY = (point.y - rect.midY) / (rect.height / 2)
+        return normalizedX * normalizedX + normalizedY * normalizedY <= 1
+    }
+
+    func resizeHandles(for annotation: AnnotationObject, size: CGFloat) -> [AnnotationResizeHandle: CGRect] {
+        [:]
+    }
+
+    func selectionPath(for annotation: AnnotationObject) -> CGPath {
+        badgePath(for: annotation)
+    }
+
+    private func badgePath(for annotation: AnnotationObject) -> CGPath {
+        CGPath(ellipseIn: badgeRect(for: annotation), transform: nil)
+    }
+
+    private func badgeRect(for annotation: AnnotationObject) -> CGRect {
+        guard case let .oval(rect) = annotation.geometry else {
+            return .zero
+        }
+
+        return rect.standardizedForEditor
+    }
+
+    private func textFrame(for rect: CGRect) -> CGRect {
+        let height = rect.height * 0.72
+        return CGRect(
+            x: rect.minX + rect.width * 0.08,
+            y: rect.midY - height / 2,
+            width: rect.width * 0.84,
+            height: height
+        )
+    }
+
+    private func attributedNumber(_ number: Int, in rect: CGRect) -> NSAttributedString {
+        let text = String(number)
+        let digitCount = CGFloat(text.count)
+        let widthScale = min(0.54, 0.78 / max(1, digitCount * 0.56))
+        let fontSize = max(10, rect.width * widthScale)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+
+        return NSAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
+                .foregroundColor: NSColor.white,
+                .paragraphStyle: paragraphStyle
+            ]
+        )
     }
 }
 

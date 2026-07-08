@@ -12,6 +12,7 @@ import Foundation
 enum EditorTool: String, CaseIterable, Identifiable {
     case arrow
     case line
+    case numbering
     case rectangle
     case filledRectangle
     case oval
@@ -79,6 +80,7 @@ enum EditorCropFrameHandle: Equatable, CaseIterable {
 enum EditorToolbarAction: String, CaseIterable, Identifiable {
     case arrow
     case line
+    case numbering
     case rectangle
     case filledRectangle
     case oval
@@ -101,6 +103,8 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
             "Arrow"
         case .line:
             "Line"
+        case .numbering:
+            "Numbering"
         case .rectangle:
             "Rectangle"
         case .filledRectangle:
@@ -132,6 +136,8 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
             "arrow.up.right"
         case .line:
             "line.diagonal"
+        case .numbering:
+            "number.circle.fill"
         case .rectangle:
             "rectangle"
         case .filledRectangle:
@@ -163,6 +169,8 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
             "A"
         case .line:
             "L"
+        case .numbering:
+            "N"
         case .rectangle:
             "R"
         case .filledRectangle:
@@ -194,6 +202,8 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
             .arrow
         case .line:
             .line
+        case .numbering:
+            .numbering
         case .rectangle:
             .rectangle
         case .filledRectangle:
@@ -216,6 +226,7 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
     static let drawingTools: [EditorToolbarAction] = [
         .arrow,
         .line,
+        .numbering,
         .rectangle,
         .filledRectangle,
         .oval,
@@ -321,6 +332,10 @@ final class EditorViewModel: ObservableObject {
         activeTool == .arrow || selectedAnnotation?.kind == .arrow
     }
 
+    var usesBadgeSizeControl: Bool {
+        activeTool == .numbering || selectedAnnotation?.kind == .numbering
+    }
+
     var selectedArrowStyleTitle: String {
         selectedArrowStyle.title
     }
@@ -418,7 +433,7 @@ final class EditorViewModel: ObservableObject {
             copy()
         case .save:
             save()
-        case .arrow, .line, .rectangle, .filledRectangle, .oval, .text, .highlight, .blurPixelate, .crop:
+        case .arrow, .line, .numbering, .rectangle, .filledRectangle, .oval, .text, .highlight, .blurPixelate, .crop:
             break
         }
     }
@@ -437,7 +452,7 @@ final class EditorViewModel: ObservableObject {
             canUndo
         case .redo:
             canRedo
-        case .arrow, .line, .rectangle, .filledRectangle, .oval, .text, .highlight, .blurPixelate, .crop, .copy, .save:
+        case .arrow, .line, .numbering, .rectangle, .filledRectangle, .oval, .text, .highlight, .blurPixelate, .crop, .copy, .save:
             true
         }
     }
@@ -662,6 +677,11 @@ final class EditorViewModel: ObservableObject {
             )
         case .empty:
             selectedAnnotationID = nil
+
+            if activeTool == .numbering {
+                placeNextNumberingBadge(at: point)
+                return
+            }
 
             guard let activeTool,
                   let draftAnnotation = annotationInteractionService.makeAnnotation(
@@ -888,6 +908,9 @@ final class EditorViewModel: ObservableObject {
             return true
         case "l":
             selectTool(.line)
+            return true
+        case "n":
+            selectTool(.numbering)
             return true
         case "r":
             selectTool(.rectangle)
@@ -1485,6 +1508,38 @@ final class EditorViewModel: ObservableObject {
             effectIntensity: selectedStrokeWidth,
             arrowStyle: selectedArrowStyle
         )
+    }
+
+    private func placeNextNumberingBadge(at point: CGPoint) {
+        let previousState = currentHistoryState()
+        let style = activeAnnotationStyle()
+        let diameter = AnnotationObject.numberingBadgeDiameter(for: style.lineWidth)
+        let centeredRect = CGRect(
+            x: point.x - diameter / 2,
+            y: point.y - diameter / 2,
+            width: diameter,
+            height: diameter
+        )
+        .movedInside(currentCanvasBounds)
+        let annotation = AnnotationObject.numberingBadge(
+            center: CGPoint(x: centeredRect.midX, y: centeredRect.midY),
+            number: nextNumberingValue(),
+            style: style
+        )
+
+        annotationObjects.append(annotation)
+        selectedAnnotationID = annotation.id
+        activeDragSession = nil
+        recordUndoState(previousState)
+    }
+
+    private func nextNumberingValue() -> Int {
+        let highestNumber = annotationObjects
+            .filter { annotation in annotation.kind == .numbering }
+            .compactMap(\.number)
+            .max() ?? 0
+
+        return highestNumber == Int.max ? Int.max : highestNumber + 1
     }
 
     private func syncArrowStyleFromSelectedAnnotation(_ annotation: AnnotationObject) {

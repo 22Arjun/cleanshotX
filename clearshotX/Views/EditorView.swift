@@ -442,12 +442,26 @@ private struct EditorToolbarView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
                 .buttonStyle(EditorPaletteButtonStyle(isSelected: viewModel.isStrokeWidthSelected(width)))
-                .help(viewModel.activeTool == .blurPixelate ? "Pixelate Strength: \(Int(width))" : "Stroke Width: \(Int(width))")
-                .accessibilityLabel(viewModel.activeTool == .blurPixelate ? "Pixelate Strength \(Int(width))" : "Stroke Width \(Int(width))")
+                .help(strokeSizeLabel(for: width, includeValueSeparator: true))
+                .accessibilityLabel(strokeSizeLabel(for: width, includeValueSeparator: false))
                 .toolbarCursor(.pointingHand)
             }
         }
         .toolbarGroupChrome()
+    }
+
+    private func strokeSizeLabel(for width: CGFloat, includeValueSeparator: Bool) -> String {
+        let separator = includeValueSeparator ? ": " : " "
+
+        if viewModel.activeTool == .blurPixelate {
+            return "Pixelate Strength\(separator)\(Int(width))"
+        }
+
+        if viewModel.usesBadgeSizeControl {
+            return "Badge Size\(separator)\(Int(width))"
+        }
+
+        return "Stroke Width\(separator)\(Int(width))"
     }
 
     private var arrowStyleMenu: some View {
@@ -2112,6 +2126,7 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
     private var drawingToolIsActive: Bool {
         activeTool == .arrow ||
             activeTool == .line ||
+            activeTool == .numbering ||
             activeTool == .rectangle ||
             activeTool == .filledRectangle ||
             activeTool == .oval ||
@@ -2337,6 +2352,8 @@ private extension View {
             keyboardShortcut("a", modifiers: [])
         case .line:
             keyboardShortcut("l", modifiers: [])
+        case .numbering:
+            keyboardShortcut("n", modifiers: [])
         case .rectangle:
             keyboardShortcut("r", modifiers: [])
         case .filledRectangle:
