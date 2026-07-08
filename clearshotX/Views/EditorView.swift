@@ -72,6 +72,7 @@ private struct EditorToolbarView: View {
         Group {
             toolButtonGroup(EditorToolbarAction.drawingTools)
             if viewModel.shouldShowHighlightIntensitySlider {
+                highlightShapeMenu
                 highlightIntensitySlider
             } else {
                 colorPalette
@@ -538,6 +539,48 @@ private struct EditorToolbarView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Outside Fade Intensity")
         .accessibilityValue("\(Int(round(viewModel.selectedHighlightIntensity * 100))) percent")
+        .toolbarGroupChrome()
+        .toolbarCursor(.pointingHand)
+    }
+
+    private var highlightShapeMenu: some View {
+        Menu {
+            ForEach(AnnotationSpotlightShape.allCases) { shape in
+                Button {
+                    viewModel.setSpotlightShape(shape)
+                } label: {
+                    HStack {
+                        if viewModel.isSpotlightShapeSelected(shape) {
+                            Image(systemName: "checkmark")
+                        }
+
+                        Label(shape.title, systemImage: shape.systemImageName)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: viewModel.selectedSpotlightShape.systemImageName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+
+                Text(viewModel.selectedSpotlightShapeTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            }
+            .foregroundStyle(Color(nsColor: .labelColor).opacity(0.9))
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .help("Highlight Shape: \(viewModel.selectedSpotlightShapeTitle)")
+        .accessibilityLabel("Highlight Shape")
+        .accessibilityValue(viewModel.selectedSpotlightShapeTitle)
         .toolbarGroupChrome()
         .toolbarCursor(.pointingHand)
     }

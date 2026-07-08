@@ -300,6 +300,7 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var selectedTextSize: CGFloat = 24
     @Published private(set) var selectedOpacity: CGFloat = 1
     @Published private(set) var selectedHighlightIntensity: CGFloat = 0.45
+    @Published private(set) var selectedSpotlightShape: AnnotationSpotlightShape = .rectangle
     @Published private(set) var selectedCropRatioID = "freeform"
     @Published private(set) var customCropRatio: CGFloat?
     @Published private(set) var selectedCropFillColorID = "transparent"
@@ -340,6 +341,10 @@ final class EditorViewModel: ObservableObject {
 
     var shouldShowHighlightIntensitySlider: Bool {
         activeTool == .highlight || selectedAnnotation?.kind == .highlight
+    }
+
+    var selectedSpotlightShapeTitle: String {
+        selectedSpotlightShape.title
     }
 
     var selectedArrowStyleTitle: String {
@@ -510,6 +515,19 @@ final class EditorViewModel: ObservableObject {
 
     func beginHighlightIntensityEditing() {
         highlightIntensityEditingInitialState = currentHistoryState()
+    }
+
+    func setSpotlightShape(_ shape: AnnotationSpotlightShape) {
+        let previousState = currentHistoryState()
+        selectedSpotlightShape = shape
+
+        if applyActiveStyleToSelectedAnnotation(only: .highlight) {
+            recordUndoState(previousState)
+        }
+    }
+
+    func isSpotlightShapeSelected(_ shape: AnnotationSpotlightShape) -> Bool {
+        selectedSpotlightShape == shape
     }
 
     func setHighlightIntensity(_ intensity: CGFloat) {
@@ -1545,6 +1563,7 @@ final class EditorViewModel: ObservableObject {
             fontSize: selectedTextSize,
             effectIntensity: selectedStrokeWidth,
             spotlightIntensity: selectedHighlightIntensity,
+            spotlightShape: selectedSpotlightShape,
             arrowStyle: selectedArrowStyle
         )
     }
@@ -1595,6 +1614,7 @@ final class EditorViewModel: ObservableObject {
         }
 
         selectedHighlightIntensity = annotation.style.spotlightIntensity
+        selectedSpotlightShape = annotation.style.spotlightShape
     }
 
     private func annotation(withID id: UUID) -> AnnotationObject? {

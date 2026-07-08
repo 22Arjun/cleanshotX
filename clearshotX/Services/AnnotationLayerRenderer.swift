@@ -816,13 +816,14 @@ final class HighlightAnnotationRenderer: AnnotationShapeRendering {
     }
 
     func hitTest(_ point: CGPoint, annotation: AnnotationObject, tolerance: CGFloat) -> Bool {
-        guard case let .highlight(rect) = annotation.geometry else {
-            return false
-        }
-
-        return rect.standardizedForEditor
-            .insetBy(dx: -tolerance, dy: -tolerance)
-            .contains(point)
+        let path = highlightedRegionPath(for: annotation)
+        return path.contains(point)
+            || path.copy(
+                strokingWithWidth: tolerance * 2,
+                lineCap: .round,
+                lineJoin: .round,
+                miterLimit: 2
+            ).contains(point)
     }
 
     func resizeHandles(for annotation: AnnotationObject, size: CGFloat) -> [AnnotationResizeHandle: CGRect] {
@@ -857,13 +858,36 @@ final class HighlightAnnotationRenderer: AnnotationShapeRendering {
         }
 
         let normalizedRect = rect.standardizedForEditor
-        let cornerRadius = min(6, max(2, min(normalizedRect.width, normalizedRect.height) * 0.06))
-        return CGPath(
-            roundedRect: normalizedRect,
-            cornerWidth: cornerRadius,
-            cornerHeight: cornerRadius,
-            transform: nil
-        )
+
+        switch annotation.style.spotlightShape {
+        case .rectangle:
+            return CGPath(rect: normalizedRect, transform: nil)
+        case .roundedRectangle:
+            let cornerRadius = min(18, max(4, min(normalizedRect.width, normalizedRect.height) * 0.12))
+            return CGPath(
+                roundedRect: normalizedRect,
+                cornerWidth: cornerRadius,
+                cornerHeight: cornerRadius,
+                transform: nil
+            )
+        case .oval:
+            return CGPath(ellipseIn: normalizedRect, transform: nil)
+        case .triangle:
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: normalizedRect.midX, y: normalizedRect.minY))
+            path.addLine(to: CGPoint(x: normalizedRect.maxX, y: normalizedRect.maxY))
+            path.addLine(to: CGPoint(x: normalizedRect.minX, y: normalizedRect.maxY))
+            path.closeSubpath()
+            return path
+        case .diamond:
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: normalizedRect.midX, y: normalizedRect.minY))
+            path.addLine(to: CGPoint(x: normalizedRect.maxX, y: normalizedRect.midY))
+            path.addLine(to: CGPoint(x: normalizedRect.midX, y: normalizedRect.maxY))
+            path.addLine(to: CGPoint(x: normalizedRect.minX, y: normalizedRect.midY))
+            path.closeSubpath()
+            return path
+        }
     }
 }
 

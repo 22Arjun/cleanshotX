@@ -389,6 +389,48 @@ enum AnnotationArrowStyle: String, CaseIterable, Identifiable {
     }
 }
 
+enum AnnotationSpotlightShape: String, CaseIterable, Identifiable {
+    case rectangle
+    case roundedRectangle
+    case oval
+    case triangle
+    case diamond
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .rectangle:
+            "Rectangle"
+        case .roundedRectangle:
+            "Rounded Rectangle"
+        case .oval:
+            "Oval"
+        case .triangle:
+            "Triangle"
+        case .diamond:
+            "Diamond"
+        }
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .rectangle:
+            "rectangle"
+        case .roundedRectangle:
+            "rectangle.roundedtop"
+        case .oval:
+            "oval"
+        case .triangle:
+            "triangle"
+        case .diamond:
+            "diamond"
+        }
+    }
+}
+
 struct AnnotationStyle: Equatable {
     var strokeColor: NSColor = .controlAccentColor
     var fillColor: NSColor = .clear
@@ -397,6 +439,7 @@ struct AnnotationStyle: Equatable {
     var fontSize: CGFloat = 24
     var effectIntensity: CGFloat = 4
     var spotlightIntensity: CGFloat = 0.45
+    var spotlightShape: AnnotationSpotlightShape = .rectangle
     var arrowStyle: AnnotationArrowStyle = .fancy
 }
 
