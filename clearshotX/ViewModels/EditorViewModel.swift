@@ -532,7 +532,18 @@ final class EditorViewModel: ObservableObject {
 
     func setHighlightIntensity(_ intensity: CGFloat) {
         let previousState = currentHistoryState()
-        selectedHighlightIntensity = min(max(intensity, 0.1), 0.85)
+        let steppedIntensity = (intensity * 20).rounded() / 20
+        let normalizedIntensity = min(max(steppedIntensity, 0.1), 0.85)
+
+        guard normalizedIntensity != selectedHighlightIntensity else {
+            return
+        }
+
+        selectedHighlightIntensity = normalizedIntensity
+        NSHapticFeedbackManager.defaultPerformer.perform(
+            .levelChange,
+            performanceTime: .now
+        )
 
         if applyActiveStyleToSelectedAnnotation(only: .highlight),
            highlightIntensityEditingInitialState == nil {
