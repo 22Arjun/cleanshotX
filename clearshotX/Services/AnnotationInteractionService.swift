@@ -103,6 +103,15 @@ final class AnnotationInteractionService: AnnotationInteractionServicing {
             )
         case .text, .crop:
             return nil
+        case .textHighlight:
+            return AnnotationObject.textHighlight(
+                rect: textHighlightRect(
+                    from: startPoint,
+                    to: endPoint,
+                    lineWidth: style.lineWidth
+                ),
+                style: style
+            )
         }
     }
 
@@ -112,6 +121,8 @@ final class AnnotationInteractionService: AnnotationInteractionServicing {
             return hypot(end.x - start.x, end.y - start.y) >= 8
         case let .rectangle(rect), let .oval(rect), let .highlight(rect), let .blurPixelate(rect):
             return rect.standardizedForEditor.width >= 8 && rect.standardizedForEditor.height >= 8
+        case let .textHighlight(rect):
+            return rect.standardizedForEditor.width >= 12
         case let .text(_, text):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
@@ -144,6 +155,22 @@ final class AnnotationInteractionService: AnnotationInteractionServicing {
         }
 
         return .empty
+    }
+
+    private func textHighlightRect(from startPoint: CGPoint, to endPoint: CGPoint, lineWidth: CGFloat) -> CGRect {
+        let normalizedWidth = abs(endPoint.x - startPoint.x)
+        let markerHeight = max(12, lineWidth * 4.5)
+        let verticalTravel = abs(endPoint.y - startPoint.y)
+        let height = max(markerHeight, min(markerHeight * 1.45, verticalTravel))
+        let midY = (startPoint.y + endPoint.y) / 2
+
+        return CGRect(
+            x: min(startPoint.x, endPoint.x),
+            y: midY - height / 2,
+            width: normalizedWidth,
+            height: height
+        )
+        .standardizedForEditor
     }
 }
 

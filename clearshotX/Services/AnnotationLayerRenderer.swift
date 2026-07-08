@@ -33,6 +33,7 @@ final class AnnotationRendererRegistry {
         RectangleAnnotationRenderer(),
         FilledRectangleAnnotationRenderer(),
         OvalAnnotationRenderer(),
+        TextHighlightAnnotationRenderer(),
         HighlightAnnotationRenderer(),
         BlurPixelateAnnotationRenderer(),
         TextAnnotationRenderer()
@@ -172,7 +173,9 @@ private extension [AnnotationObject] {
         } + filter { annotation in
             annotation.kind == .highlight
         } + filter { annotation in
-            annotation.kind != .blurPixelate && annotation.kind != .highlight
+            annotation.kind == .textHighlight
+        } + filter { annotation in
+            annotation.kind != .blurPixelate && annotation.kind != .highlight && annotation.kind != .textHighlight
         }
     }
 }
@@ -797,6 +800,156 @@ final class OvalAnnotationRenderer: AnnotationShapeRendering {
         }
 
         return CGPath(ellipseIn: rect.standardizedForEditor, transform: nil)
+    }
+}
+
+final class TextHighlightAnnotationRenderer: AnnotationShapeRendering {
+    let kind = AnnotationObjectKind.textHighlight
+
+    func makeLayer(for annotation: AnnotationObject, context: AnnotationRenderContext) -> CALayer {
+        let container = CALayer()
+        let rect = highlightRect(for: annotation)
+        container.frame = .zero
+        container.opacity = Float(markerOpacity(for: annotation))
+        container.allowsEdgeAntialiasing = true
+
+        let markerLayer = CAShapeLayer()
+        markerLayer.path = markerPath(in: rect, wobble: wobbleAmount(for: rect))
+        markerLayer.fillColor = annotation.style.strokeColor.cgColor
+        markerLayer.strokeColor = annotation.style.strokeColor.cgColor
+        markerLayer.lineWidth = max(1, min(annotation.style.lineWidth * 0.16, 2))
+        markerLayer.lineJoin = .round
+        markerLayer.lineCap = .round
+        markerLayer.allowsEdgeAntialiasing = true
+        markerLayer.shadowColor = annotation.style.strokeColor.cgColor
+        markerLayer.shadowOpacity = 0.12
+        markerLayer.shadowRadius = 1.25
+        markerLayer.shadowOffset = .zero
+        container.addSublayer(markerLayer)
+
+        for streak in markerStreakLayers(for: annotation, in: rect) {
+            container.addSublayer(streak)
+        }
+
+        return container
+    }
+
+    func hitTest(_ point: CGPoint, annotation: AnnotationObject, tolerance: CGFloat) -> Bool {
+        highlightRect(for: annotation)
+            .insetBy(dx: -tolerance, dy: -tolerance)
+            .contains(point)
+    }
+
+    func resizeHandles(for annotation: AnnotationObject, size: CGFloat) -> [AnnotationResizeHandle: CGRect] {
+        let normalizedRect = highlightRect(for: annotation)
+
+        return [
+            .topLeft: handleRect(centeredAt: CGPoint(x: normalizedRect.minX, y: normalizedRect.minY), size: size),
+            .topRight: handleRect(centeredAt: CGPoint(x: normalizedRect.maxX, y: normalizedRect.minY), size: size),
+            .bottomLeft: handleRect(centeredAt: CGPoint(x: normalizedRect.minX, y: normalizedRect.maxY), size: size),
+            .bottomRight: handleRect(centeredAt: CGPoint(x: normalizedRect.maxX, y: normalizedRect.maxY), size: size)
+        ]
+    }
+
+    func selectionPath(for annotation: AnnotationObject) -> CGPath {
+        markerPath(in: highlightRect(for: annotation), wobble: 0)
+    }
+
+    private func markerStreakLayers(for annotation: AnnotationObject, in rect: CGRect) -> [CAShapeLayer] {
+        guard rect.width >= 28, rect.height >= 10 else {
+            return []
+        }
+
+        let color = annotation.style.strokeColor
+        return [
+            streakLayer(
+                color: color,
+                rect: CGRect(
+                    x: rect.minX + rect.height * 0.38,
+                    y: rect.minY + rect.height * 0.18,
+                    width: rect.width - rect.height * 0.76,
+                    height: max(1.5, rect.height * 0.13)
+                ),
+                opacity: 0.22
+            ),
+            streakLayer(
+                color: color,
+                rect: CGRect(
+                    x: rect.minX + rect.height * 0.55,
+                    y: rect.maxY - rect.height * 0.26,
+                    width: rect.width - rect.height * 1.1,
+                    height: max(1.2, rect.height * 0.1)
+                ),
+                opacity: 0.16
+            )
+        ]
+    }
+
+    private func streakLayer(color: NSColor, rect: CGRect, opacity: Float) -> CAShapeLayer {
+        let layer = CAShapeLayer()
+        layer.path = CGPath(
+            roundedRect: rect,
+            cornerWidth: rect.height / 2,
+            cornerHeight: rect.height / 2,
+            transform: nil
+        )
+        layer.fillColor = NSColor.white.withAlphaComponent(0.42).cgColor
+        layer.strokeColor = color.withAlphaComponent(0.18).cgColor
+        layer.lineWidth = 0.5
+        layer.opacity = opacity
+        layer.allowsEdgeAntialiasing = true
+        return layer
+    }
+
+    private func markerPath(in rect: CGRect, wobble: CGFloat) -> CGPath {
+        let normalizedRect = rect.standardizedForEditor
+        let radius = min(normalizedRect.height * 0.48, max(6, normalizedRect.width * 0.08))
+        let topInset = wobble
+        let bottomInset = wobble * 0.55
+        let left = normalizedRect.minX
+        let right = normalizedRect.maxX
+        let top = normalizedRect.minY + topInset
+        let bottom = normalizedRect.maxY - bottomInset
+        let midY = normalizedRect.midY
+
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: left + radius, y: top))
+        path.addLine(to: CGPoint(x: right - radius * 0.88, y: top + wobble * 0.35))
+        path.addQuadCurve(
+            to: CGPoint(x: right, y: midY),
+            control: CGPoint(x: right + radius * 0.18, y: top + radius * 0.28)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: right - radius, y: bottom),
+            control: CGPoint(x: right + radius * 0.18, y: bottom - radius * 0.24)
+        )
+        path.addLine(to: CGPoint(x: left + radius * 0.9, y: bottom - wobble * 0.2))
+        path.addQuadCurve(
+            to: CGPoint(x: left, y: midY),
+            control: CGPoint(x: left - radius * 0.18, y: bottom - radius * 0.24)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: left + radius, y: top),
+            control: CGPoint(x: left - radius * 0.18, y: top + radius * 0.28)
+        )
+        path.closeSubpath()
+        return path
+    }
+
+    private func highlightRect(for annotation: AnnotationObject) -> CGRect {
+        guard case let .textHighlight(rect) = annotation.geometry else {
+            return .zero
+        }
+
+        return rect.standardizedForEditor
+    }
+
+    private func wobbleAmount(for rect: CGRect) -> CGFloat {
+        min(1.8, max(0.4, rect.height * 0.045))
+    }
+
+    private func markerOpacity(for annotation: AnnotationObject) -> CGFloat {
+        min(max(annotation.style.opacity * 0.62, 0.18), 0.78)
     }
 }
 

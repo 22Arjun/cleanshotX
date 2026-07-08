@@ -466,6 +466,10 @@ private struct EditorToolbarView: View {
             return "Badge Size\(separator)\(Int(width))"
         }
 
+        if viewModel.usesMarkerSizeControl {
+            return "Marker Size\(separator)\(Int(width))"
+        }
+
         return "Stroke Width\(separator)\(Int(width))"
     }
 
@@ -2449,6 +2453,8 @@ private extension View {
             keyboardShortcut("o", modifiers: [])
         case .text:
             keyboardShortcut("t", modifiers: [])
+        case .textHighlight:
+            keyboardShortcut("m", modifiers: [])
         case .highlight:
             keyboardShortcut("h", modifiers: [])
         case .blurPixelate:

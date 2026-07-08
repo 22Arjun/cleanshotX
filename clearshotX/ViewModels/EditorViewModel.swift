@@ -17,6 +17,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
     case filledRectangle
     case oval
     case text
+    case textHighlight
     case highlight
     case blurPixelate
     case crop
@@ -85,6 +86,7 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
     case filledRectangle
     case oval
     case text
+    case textHighlight
     case highlight
     case blurPixelate
     case crop
@@ -113,8 +115,10 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
             "Oval"
         case .text:
             "Text"
+        case .textHighlight:
+            "Text Highlight"
         case .highlight:
-            "Highlight"
+            "Spotlight Highlight"
         case .blurPixelate:
             "Blur/Pixelate"
         case .crop:
@@ -146,8 +150,10 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
             "oval"
         case .text:
             "textformat"
-        case .highlight:
+        case .textHighlight:
             "highlighter"
+        case .highlight:
+            "viewfinder"
         case .blurPixelate:
             "square.grid.3x3.fill"
         case .crop:
@@ -179,6 +185,8 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
             "O"
         case .text:
             "T"
+        case .textHighlight:
+            "M"
         case .highlight:
             "H"
         case .blurPixelate:
@@ -212,6 +220,8 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
             .oval
         case .text:
             .text
+        case .textHighlight:
+            .textHighlight
         case .highlight:
             .highlight
         case .blurPixelate:
@@ -231,6 +241,7 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
         .filledRectangle,
         .oval,
         .text,
+        .textHighlight,
         .highlight,
         .blurPixelate,
         .crop
@@ -339,6 +350,10 @@ final class EditorViewModel: ObservableObject {
         activeTool == .numbering || selectedAnnotation?.kind == .numbering
     }
 
+    var usesMarkerSizeControl: Bool {
+        activeTool == .textHighlight || selectedAnnotation?.kind == .textHighlight
+    }
+
     var shouldShowHighlightIntensitySlider: Bool {
         activeTool == .highlight || selectedAnnotation?.kind == .highlight
     }
@@ -444,7 +459,7 @@ final class EditorViewModel: ObservableObject {
             copy()
         case .save:
             save()
-        case .arrow, .line, .numbering, .rectangle, .filledRectangle, .oval, .text, .highlight, .blurPixelate, .crop:
+        case .arrow, .line, .numbering, .rectangle, .filledRectangle, .oval, .text, .textHighlight, .highlight, .blurPixelate, .crop:
             break
         }
     }
@@ -463,7 +478,7 @@ final class EditorViewModel: ObservableObject {
             canUndo
         case .redo:
             canRedo
-        case .arrow, .line, .numbering, .rectangle, .filledRectangle, .oval, .text, .highlight, .blurPixelate, .crop, .copy, .save:
+        case .arrow, .line, .numbering, .rectangle, .filledRectangle, .oval, .text, .textHighlight, .highlight, .blurPixelate, .crop, .copy, .save:
             true
         }
     }
@@ -990,6 +1005,9 @@ final class EditorViewModel: ObservableObject {
             return true
         case "t":
             selectTool(.text)
+            return true
+        case "m":
+            selectTool(.textHighlight)
             return true
         case "h":
             selectTool(.highlight)

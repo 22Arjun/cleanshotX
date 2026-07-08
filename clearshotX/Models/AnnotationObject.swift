@@ -16,6 +16,7 @@ enum AnnotationObjectKind: String, CaseIterable, Identifiable {
     case filledRectangle
     case oval
     case text
+    case textHighlight
     case highlight
     case blurPixelate
 
@@ -38,6 +39,7 @@ enum AnnotationGeometry: Equatable {
     case rectangle(CGRect)
     case oval(CGRect)
     case text(rect: CGRect, text: String)
+    case textHighlight(CGRect)
     case highlight(CGRect)
     case blurPixelate(CGRect)
 
@@ -50,7 +52,7 @@ enum AnnotationGeometry: Equatable {
                 width: abs(end.x - start.x),
                 height: abs(end.y - start.y)
             )
-        case let .rectangle(rect), let .oval(rect), let .highlight(rect), let .blurPixelate(rect):
+        case let .rectangle(rect), let .oval(rect), let .textHighlight(rect), let .highlight(rect), let .blurPixelate(rect):
             return rect.standardizedForEditor
         case let .text(rect, _):
             return rect.standardizedForEditor
@@ -70,6 +72,8 @@ enum AnnotationGeometry: Equatable {
             return .oval(rect.offsetBy(dx: translation.width, dy: translation.height))
         case let .text(rect, text):
             return .text(rect: rect.offsetBy(dx: translation.width, dy: translation.height), text: text)
+        case let .textHighlight(rect):
+            return .textHighlight(rect.offsetBy(dx: translation.width, dy: translation.height))
         case let .highlight(rect):
             return .highlight(rect.offsetBy(dx: translation.width, dy: translation.height))
         case let .blurPixelate(rect):
@@ -90,6 +94,8 @@ enum AnnotationGeometry: Equatable {
             return .oval(rect.transformedByMappingCorners { $0.rotatedClockwise(in: canvasSize) })
         case let .text(rect, text):
             return .text(rect: rect.transformedByMappingCorners { $0.rotatedClockwise(in: canvasSize) }, text: text)
+        case let .textHighlight(rect):
+            return .textHighlight(rect.transformedByMappingCorners { $0.rotatedClockwise(in: canvasSize) })
         case let .highlight(rect):
             return .highlight(rect.transformedByMappingCorners { $0.rotatedClockwise(in: canvasSize) })
         case let .blurPixelate(rect):
@@ -110,6 +116,8 @@ enum AnnotationGeometry: Equatable {
             return .oval(rect.transformedByMappingCorners { $0.flippedHorizontally(in: canvasSize) })
         case let .text(rect, text):
             return .text(rect: rect.transformedByMappingCorners { $0.flippedHorizontally(in: canvasSize) }, text: text)
+        case let .textHighlight(rect):
+            return .textHighlight(rect.transformedByMappingCorners { $0.flippedHorizontally(in: canvasSize) })
         case let .highlight(rect):
             return .highlight(rect.transformedByMappingCorners { $0.flippedHorizontally(in: canvasSize) })
         case let .blurPixelate(rect):
@@ -130,6 +138,8 @@ enum AnnotationGeometry: Equatable {
             return .oval(rect.transformedByMappingCorners { $0.flippedVertically(in: canvasSize) })
         case let .text(rect, text):
             return .text(rect: rect.transformedByMappingCorners { $0.flippedVertically(in: canvasSize) }, text: text)
+        case let .textHighlight(rect):
+            return .textHighlight(rect.transformedByMappingCorners { $0.flippedVertically(in: canvasSize) })
         case let .highlight(rect):
             return .highlight(rect.transformedByMappingCorners { $0.flippedVertically(in: canvasSize) })
         case let .blurPixelate(rect):
@@ -277,6 +287,49 @@ enum AnnotationGeometry: Equatable {
                         height: point.y - normalizedRect.minY
                     ).standardizedForEditor,
                     text: text
+                )
+            case .startPoint, .endPoint:
+                return self
+            }
+        case let .textHighlight(rect):
+            let normalizedRect = rect.standardizedForEditor
+
+            switch handle {
+            case .topLeft:
+                return .textHighlight(
+                    CGRect(
+                        x: point.x,
+                        y: point.y,
+                        width: normalizedRect.maxX - point.x,
+                        height: normalizedRect.maxY - point.y
+                    ).standardizedForEditor
+                )
+            case .topRight:
+                return .textHighlight(
+                    CGRect(
+                        x: normalizedRect.minX,
+                        y: point.y,
+                        width: point.x - normalizedRect.minX,
+                        height: normalizedRect.maxY - point.y
+                    ).standardizedForEditor
+                )
+            case .bottomLeft:
+                return .textHighlight(
+                    CGRect(
+                        x: point.x,
+                        y: normalizedRect.minY,
+                        width: normalizedRect.maxX - point.x,
+                        height: point.y - normalizedRect.minY
+                    ).standardizedForEditor
+                )
+            case .bottomRight:
+                return .textHighlight(
+                    CGRect(
+                        x: normalizedRect.minX,
+                        y: normalizedRect.minY,
+                        width: point.x - normalizedRect.minX,
+                        height: point.y - normalizedRect.minY
+                    ).standardizedForEditor
                 )
             case .startPoint, .endPoint:
                 return self
@@ -572,6 +625,19 @@ struct AnnotationObject: Identifiable, Equatable {
             id: id,
             kind: .text,
             geometry: .text(rect: rect.standardizedForEditor, text: text),
+            style: style
+        )
+    }
+
+    static func textHighlight(
+        id: UUID = UUID(),
+        rect: CGRect,
+        style: AnnotationStyle
+    ) -> AnnotationObject {
+        AnnotationObject(
+            id: id,
+            kind: .textHighlight,
+            geometry: .textHighlight(rect.standardizedForEditor),
             style: style
         )
     }
