@@ -410,17 +410,12 @@ private struct EditorToolbarView: View {
                 }
             }
         } label: {
-            HStack(spacing: 8) {
+            ZStack {
                 Image(nsImage: cropFillSwatchImage(color: viewModel.selectedStrokeColor, size: 22))
                     .accessibilityHidden(true)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
             }
             .foregroundStyle(Color(nsColor: .labelColor).opacity(0.9))
-            .padding(.horizontal, 9)
-            .frame(height: 34)
+            .frame(width: 34, height: 34)
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .menuStyle(.borderlessButton)
@@ -476,21 +471,16 @@ private struct EditorToolbarView: View {
         Button {
             isStrokeWidthDropdownPresented.toggle()
         } label: {
-            HStack(spacing: 8) {
+            ZStack {
                 Image(nsImage: strokeWidthSymbolImage(
                     width: viewModel.selectedStrokeWidth,
-                    color: viewModel.selectedStrokeColor.withAlphaComponent(viewModel.selectedOpacity),
-                    size: NSSize(width: 38, height: 18)
+                    color: NSColor.labelColor.withAlphaComponent(0.86),
+                    size: NSSize(width: 30, height: 16)
                 ))
                 .accessibilityHidden(true)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
             }
             .foregroundStyle(Color(nsColor: .labelColor).opacity(0.9))
-            .padding(.horizontal, 9)
-            .frame(height: 34)
+            .frame(width: 38, height: 30)
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -519,7 +509,7 @@ private struct EditorToolbarView: View {
 
                         Image(nsImage: strokeWidthSymbolImage(
                             width: width,
-                            color: viewModel.selectedStrokeColor.withAlphaComponent(viewModel.selectedOpacity),
+                            color: NSColor.labelColor.withAlphaComponent(0.86),
                             size: NSSize(width: 86, height: 18)
                         ))
                         .accessibilityHidden(true)
@@ -845,10 +835,10 @@ private struct EditorToolbarView: View {
     }
 
     private var opacitySlider: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Image(systemName: "circle.lefthalf.filled")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color(nsColor: viewModel.selectedStrokeColor).opacity(viewModel.selectedOpacity))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color(nsColor: .labelColor).opacity(max(0.38, viewModel.selectedOpacity)))
                 .accessibilityHidden(true)
 
             Slider(
@@ -866,16 +856,19 @@ private struct EditorToolbarView: View {
                     }
                 }
             )
-            .frame(width: 96)
+            .tint(Color(nsColor: .secondaryLabelColor))
+            .frame(width: 112)
 
             Text("\(Int(round(viewModel.selectedOpacity * 100)))%")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                 .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
                 .frame(width: 34, alignment: .trailing)
         }
         .padding(.horizontal, 10)
-        .frame(height: 34)
+        .frame(height: 30)
         .help("Opacity")
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Opacity")
