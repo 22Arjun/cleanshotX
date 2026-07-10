@@ -45,6 +45,7 @@ struct EditorTextFormattingCommand: Equatable {
     enum Kind: Equatable {
         case foreground
         case background
+        case baseFont
     }
 
     let id = UUID()
@@ -351,6 +352,7 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var selectedStrokeWidth: CGFloat = 4
     @Published private(set) var selectedArrowStyle: AnnotationArrowStyle = .fancy
     @Published private(set) var selectedTextSize: CGFloat = 24
+    @Published private(set) var selectedTextFontFamily: AnnotationTextFontFamily = .standard
     @Published private(set) var selectedOpacity: CGFloat = 1
     @Published private(set) var selectedPixelateIntensity: CGFloat = 4
     @Published private(set) var selectedImageEffect: AnnotationImageEffect = .pixelate
@@ -395,6 +397,14 @@ final class EditorViewModel: ObservableObject {
 
     var isTextEditingActive: Bool {
         activeTextEditingAnnotationID != nil
+    }
+
+    var usesTextControls: Bool {
+        activeTool == .text || selectedAnnotation?.kind == .text || isTextEditingActive
+    }
+
+    var selectedTextFontFamilyTitle: String {
+        selectedTextFontFamily.title
     }
 
     var isCropModeActive: Bool {
@@ -605,8 +615,33 @@ final class EditorViewModel: ObservableObject {
         let previousState = currentHistoryState()
         selectedTextSize = size
 
-        if applyActiveStyleToSelectedAnnotation(only: .text) {
+        if applyActiveStyleToSelectedAnnotation(only: .text),
+           !isTextEditingActive {
             recordUndoState(previousState)
+        }
+
+        if isTextEditingActive {
+            textFormattingCommand = EditorTextFormattingCommand(
+                kind: .baseFont,
+                color: nil
+            )
+        }
+    }
+
+    func setTextFontFamily(_ fontFamily: AnnotationTextFontFamily) {
+        let previousState = currentHistoryState()
+        selectedTextFontFamily = fontFamily
+
+        if applyActiveStyleToSelectedAnnotation(only: .text),
+           !isTextEditingActive {
+            recordUndoState(previousState)
+        }
+
+        if isTextEditingActive {
+            textFormattingCommand = EditorTextFormattingCommand(
+                kind: .baseFont,
+                color: nil
+            )
         }
     }
 
@@ -732,6 +767,10 @@ final class EditorViewModel: ObservableObject {
         selectedTextSize == size
     }
 
+    func isTextFontFamilySelected(_ fontFamily: AnnotationTextFontFamily) -> Bool {
+        selectedTextFontFamily == fontFamily
+    }
+
     func isOpacitySelected(_ opacity: CGFloat) -> Bool {
         selectedOpacity == opacity
     }
@@ -797,11 +836,14 @@ final class EditorViewModel: ObservableObject {
 
     @discardableResult
     func beginTextEditing(annotationID: UUID) -> Bool {
-        guard annotation(withID: annotationID)?.kind == .text else {
+        guard let annotation = annotation(withID: annotationID),
+              annotation.kind == .text
+        else {
             return false
         }
 
         selectedAnnotationID = annotationID
+        syncTextStyleFromSelectedAnnotation(annotation)
         draftAnnotationObject = nil
         activeDragSession = nil
         textEditingInitialState = currentHistoryState()
@@ -880,6 +922,7 @@ final class EditorViewModel: ObservableObject {
             syncArrowStyleFromSelectedAnnotation(annotation)
             syncPixelateIntensityFromSelectedAnnotation(annotation)
             syncHighlightIntensityFromSelectedAnnotation(annotation)
+            syncTextStyleFromSelectedAnnotation(annotation)
             activeDragSession = .resizing(
                 annotationID: annotationID,
                 handle: handle,
@@ -895,6 +938,7 @@ final class EditorViewModel: ObservableObject {
             syncArrowStyleFromSelectedAnnotation(annotation)
             syncPixelateIntensityFromSelectedAnnotation(annotation)
             syncHighlightIntensityFromSelectedAnnotation(annotation)
+            syncTextStyleFromSelectedAnnotation(annotation)
             activeDragSession = .moving(
                 annotationID: annotationID,
                 startPoint: point,
@@ -1766,6 +1810,7 @@ final class EditorViewModel: ObservableObject {
             lineWidth: selectedStrokeWidth,
             opacity: selectedOpacity,
             fontSize: selectedTextSize,
+            textFontFamily: selectedTextFontFamily,
             effectIntensity: selectedPixelateIntensity,
             imageEffect: selectedImageEffect,
             spotlightIntensity: selectedHighlightIntensity,
@@ -2108,6 +2153,15 @@ final class EditorViewModel: ObservableObject {
 
         selectedHighlightIntensity = annotation.style.spotlightIntensity
         selectedSpotlightShape = annotation.style.spotlightShape
+    }
+
+    private func syncTextStyleFromSelectedAnnotation(_ annotation: AnnotationObject) {
+        guard annotation.kind == .text else {
+            return
+        }
+
+        selectedTextSize = annotation.style.fontSize
+        selectedTextFontFamily = annotation.style.textFontFamily
     }
 
     private func annotation(withID id: UUID) -> AnnotationObject? {

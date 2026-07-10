@@ -560,12 +560,67 @@ enum AnnotationImageEffect: String, CaseIterable, Identifiable {
     }
 }
 
+enum AnnotationTextFontFamily: String, CaseIterable, Identifiable {
+    case standard
+    case monospaced
+    case serif
+    case rounded
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .standard:
+            "Standard"
+        case .monospaced:
+            "Monospaced"
+        case .serif:
+            "Serif"
+        case .rounded:
+            "Rounded"
+        }
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .standard:
+            "textformat"
+        case .monospaced:
+            "curlybraces"
+        case .serif:
+            "character"
+        case .rounded:
+            "textformat.size"
+        }
+    }
+
+    func font(ofSize size: CGFloat, weight: NSFont.Weight = .semibold) -> NSFont {
+        switch self {
+        case .standard:
+            return .systemFont(ofSize: size, weight: weight)
+        case .monospaced:
+            return .monospacedSystemFont(ofSize: size, weight: weight)
+        case .serif:
+            return NSFont(name: "Georgia-Bold", size: size) ??
+                NSFont(name: "Georgia", size: size) ??
+                .systemFont(ofSize: size, weight: weight)
+        case .rounded:
+            return NSFont(name: "AvenirNext-DemiBold", size: size) ??
+                NSFont(name: "AvenirNext-Medium", size: size) ??
+                .systemFont(ofSize: size, weight: weight)
+        }
+    }
+}
+
 struct AnnotationStyle: Equatable {
     var strokeColor: NSColor = .controlAccentColor
     var fillColor: NSColor = .clear
     var lineWidth: CGFloat = 3
     var opacity: CGFloat = 1
     var fontSize: CGFloat = 24
+    var textFontFamily: AnnotationTextFontFamily = .standard
     var effectIntensity: CGFloat = 4
     var imageEffect: AnnotationImageEffect = .pixelate
     var spotlightIntensity: CGFloat = 0.45

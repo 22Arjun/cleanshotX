@@ -87,7 +87,10 @@ private struct EditorToolbarView: View {
                 if viewModel.shouldShowArrowStyleMenu {
                     arrowStyleMenu
                 }
-                textSizeMenu
+                if viewModel.usesTextControls {
+                    textFontFamilyMenu
+                    textSizeMenu
+                }
                 opacityMenu
             }
             Spacer(minLength: 12)
@@ -388,44 +391,42 @@ private struct EditorToolbarView: View {
     }
 
     private var colorPalette: some View {
-        HStack(spacing: 3) {
+        Menu {
             ForEach(EditorViewModel.strokeColorOptions) { option in
                 Button {
                     viewModel.setStrokeColor(option)
                 } label: {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(
-                                viewModel.isStrokeColorSelected(option)
-                                    ? Color.accentColor.opacity(0.16)
-                                    : Color.clear
-                            )
+                    HStack {
+                        if viewModel.isStrokeColorSelected(option) {
+                            Image(systemName: "checkmark")
+                        }
 
-                        Circle()
-                            .fill(Color(nsColor: option.color))
-                            .frame(width: 18, height: 18)
-                            .overlay {
-                                Circle()
-                                    .stroke(Color(nsColor: .separatorColor).opacity(0.78), lineWidth: 1)
-                            }
-                            .overlay {
-                                if viewModel.isStrokeColorSelected(option) {
-                                    Circle()
-                                        .stroke(Color.accentColor, lineWidth: 2)
-                                        .frame(width: 24, height: 24)
-                                }
-                            }
+                        Image(nsImage: cropFillSwatchImage(color: option.color, size: 16))
+                            .accessibilityHidden(true)
+
+                        Text(option.name)
                     }
-                    .frame(width: 34, height: 34)
-                    .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
-                .buttonStyle(EditorPaletteButtonStyle(isSelected: viewModel.isStrokeColorSelected(option)))
-                .help("Stroke Color: \(option.name)")
-                .accessibilityLabel("Stroke Color \(option.name)")
-                .toolbarCursor(.pointingHand)
             }
+        } label: {
+            HStack(spacing: 8) {
+                Image(nsImage: cropFillSwatchImage(color: viewModel.selectedStrokeColor, size: 22))
+                    .accessibilityHidden(true)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            }
+            .foregroundStyle(Color(nsColor: .labelColor).opacity(0.9))
+            .padding(.horizontal, 9)
+            .frame(height: 34)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
+        .menuStyle(.borderlessButton)
+        .help("Stroke Color")
+        .accessibilityLabel("Stroke Color")
         .toolbarGroupChrome()
+        .toolbarCursor(.pointingHand)
     }
 
     private var textBackgroundColorMenu: some View {
@@ -471,37 +472,44 @@ private struct EditorToolbarView: View {
     }
 
     private var strokeWidthPicker: some View {
-        HStack(spacing: 3) {
+        Menu {
             ForEach(EditorViewModel.strokeWidthOptions, id: \.self) { width in
                 Button {
                     viewModel.setStrokeWidth(width)
                 } label: {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(
-                                viewModel.isStrokeWidthSelected(width)
-                                    ? Color.accentColor.opacity(0.16)
-                                    : Color.clear
-                            )
+                    HStack {
+                        if viewModel.isStrokeWidthSelected(width) {
+                            Image(systemName: "checkmark")
+                        }
 
-                        Capsule()
-                            .fill(
-                                viewModel.isStrokeWidthSelected(width)
-                                    ? Color.accentColor
-                                    : Color(nsColor: .labelColor).opacity(0.82)
-                            )
-                            .frame(width: 20, height: max(2, min(width, 8)))
+                        Text(strokeSizeLabel(for: width, includeValueSeparator: true))
                     }
-                    .frame(width: 34, height: 34)
-                    .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
-                .buttonStyle(EditorPaletteButtonStyle(isSelected: viewModel.isStrokeWidthSelected(width)))
-                .help(strokeSizeLabel(for: width, includeValueSeparator: true))
-                .accessibilityLabel(strokeSizeLabel(for: width, includeValueSeparator: false))
-                .toolbarCursor(.pointingHand)
             }
+        } label: {
+            HStack(spacing: 7) {
+                Capsule()
+                    .fill(Color(nsColor: .labelColor).opacity(0.82))
+                    .frame(width: 22, height: max(2, min(viewModel.selectedStrokeWidth, 8)))
+
+                Text("\(Int(viewModel.selectedStrokeWidth))")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            }
+            .foregroundStyle(Color(nsColor: .labelColor).opacity(0.9))
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
+        .menuStyle(.borderlessButton)
+        .help(strokeSizeLabel(for: viewModel.selectedStrokeWidth, includeValueSeparator: true))
+        .accessibilityLabel(strokeSizeLabel(for: viewModel.selectedStrokeWidth, includeValueSeparator: false))
         .toolbarGroupChrome()
+        .toolbarCursor(.pointingHand)
     }
 
     private func strokeSizeLabel(for width: CGFloat, includeValueSeparator: Bool) -> String {
@@ -757,6 +765,49 @@ private struct EditorToolbarView: View {
         .help("Text Size: \(Int(viewModel.selectedTextSize)) pt")
         .accessibilityLabel("Text Size")
         .accessibilityValue("\(Int(viewModel.selectedTextSize)) points")
+        .toolbarGroupChrome()
+        .toolbarCursor(.pointingHand)
+    }
+
+    private var textFontFamilyMenu: some View {
+        Menu {
+            ForEach(AnnotationTextFontFamily.allCases) { fontFamily in
+                Button {
+                    viewModel.setTextFontFamily(fontFamily)
+                } label: {
+                    HStack {
+                        if viewModel.isTextFontFamilySelected(fontFamily) {
+                            Image(systemName: "checkmark")
+                        }
+
+                        Label(fontFamily.title, systemImage: fontFamily.systemImageName)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: viewModel.selectedTextFontFamily.systemImageName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+
+                Text(viewModel.selectedTextFontFamilyTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .frame(minWidth: 78, alignment: .leading)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            }
+            .foregroundStyle(Color(nsColor: .labelColor).opacity(0.9))
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .help("Font Style: \(viewModel.selectedTextFontFamilyTitle)")
+        .accessibilityLabel("Font Style")
+        .accessibilityValue(viewModel.selectedTextFontFamilyTitle)
         .toolbarGroupChrome()
         .toolbarCursor(.pointingHand)
     }
@@ -1645,7 +1696,7 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
 
         let textView = AnnotationTextView(frame: viewRect(forImageRect: rect.standardizedForEditor))
         textView.delegate = self
-        textView.font = NSFont.systemFont(
+        textView.font = annotation.style.textFontFamily.font(
             ofSize: max(8, annotation.style.fontSize * imageDisplayScale),
             weight: .semibold
         )
@@ -1762,6 +1813,19 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
             textView.applyInlineTextColor(command.color)
         case .background:
             textView.applyInlineBackgroundColor(command.color)
+        case .baseFont:
+            guard let annotationID = activeTextAnnotationID,
+                  let annotation = viewModel?.textAnnotation(withID: annotationID)
+            else {
+                return
+            }
+
+            textView.applyBaseFont(
+                annotation.style.textFontFamily.font(
+                    ofSize: max(8, annotation.style.fontSize * imageDisplayScale),
+                    weight: .semibold
+                )
+            )
         }
 
         resizeActiveTextEditorToFitContent()
@@ -1806,7 +1870,7 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
         paragraphStyle.lineBreakMode = .byWordWrapping
 
         return [
-            .font: NSFont.systemFont(
+            .font: annotation.style.textFontFamily.font(
                 ofSize: max(8, annotation.style.fontSize * displayScale),
                 weight: .semibold
             ),
@@ -2470,6 +2534,22 @@ private final class AnnotationTextView: NSTextView {
 
     func applyInlineBackgroundColor(_ color: NSColor?) {
         applyInlineAttribute(.backgroundColor, value: color)
+    }
+
+    func applyBaseFont(_ font: NSFont) {
+        guard let textStorage else {
+            return
+        }
+
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        textStorage.beginEditing()
+        textStorage.addAttribute(.font, value: font, range: fullRange)
+        textStorage.endEditing()
+
+        var updatedTypingAttributes = typingAttributes
+        updatedTypingAttributes[.font] = font
+        typingAttributes = updatedTypingAttributes
+        didChangeText()
     }
 
     func annotationTextRuns(baseStyle: AnnotationStyle) -> [AnnotationTextRun] {

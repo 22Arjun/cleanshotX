@@ -1476,7 +1476,7 @@ final class TextAnnotationRenderer: AnnotationShapeRendering {
         let attributedString = NSMutableAttributedString(
             string: text,
             attributes: [
-                .font: NSFont.systemFont(ofSize: annotation.style.fontSize, weight: .semibold),
+                .font: annotation.style.textFontFamily.font(ofSize: annotation.style.fontSize, weight: .semibold),
                 .foregroundColor: annotation.style.strokeColor,
                 .paragraphStyle: paragraphStyle
             ]
