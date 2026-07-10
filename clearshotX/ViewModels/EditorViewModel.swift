@@ -311,7 +311,7 @@ final class EditorViewModel: ObservableObject {
         EditorTextBackgroundColorOption(id: "white", name: "White", color: .white)
     ]
 
-    static let strokeWidthOptions: [CGFloat] = [1, 2, 4, 6, 8, 12]
+    static let strokeWidthOptions: [CGFloat] = [2, 4, 6, 8, 10, 12]
     static let textSizeOptions: [CGFloat] = [16, 24, 32, 44]
     static let opacityOptions: [CGFloat] = [1, 0.75, 0.5]
     static let cropRatioOptions: [EditorCropRatioOption] = [

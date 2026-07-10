@@ -35,6 +35,7 @@ struct EditorView: View {
 
 private struct EditorToolbarView: View {
     @ObservedObject var viewModel: EditorViewModel
+    @State private var isStrokeWidthDropdownPresented = false
     private static let cropDimensionFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.allowsFloats = false
@@ -472,33 +473,16 @@ private struct EditorToolbarView: View {
     }
 
     private var strokeWidthPicker: some View {
-        Menu {
-            ForEach(EditorViewModel.strokeWidthOptions, id: \.self) { width in
-                Button {
-                    viewModel.setStrokeWidth(width)
-                } label: {
-                    HStack {
-                        if viewModel.isStrokeWidthSelected(width) {
-                            Image(systemName: "checkmark")
-                        }
-
-                        strokeWidthPreview(
-                            width: width,
-                            previewWidth: 42,
-                            color: Color(nsColor: viewModel.selectedStrokeColor).opacity(viewModel.selectedOpacity)
-                        )
-
-                        Text(strokeSizeLabel(for: width, includeValueSeparator: true))
-                    }
-                }
-            }
+        Button {
+            isStrokeWidthDropdownPresented.toggle()
         } label: {
             HStack(spacing: 8) {
-                strokeWidthPreview(
+                Image(nsImage: strokeWidthSymbolImage(
                     width: viewModel.selectedStrokeWidth,
-                    previewWidth: 34,
-                    color: Color(nsColor: viewModel.selectedStrokeColor).opacity(viewModel.selectedOpacity)
-                )
+                    color: viewModel.selectedStrokeColor.withAlphaComponent(viewModel.selectedOpacity),
+                    size: NSSize(width: 38, height: 18)
+                ))
+                .accessibilityHidden(true)
 
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .bold))
@@ -509,19 +493,55 @@ private struct EditorToolbarView: View {
             .frame(height: 34)
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .popover(isPresented: $isStrokeWidthDropdownPresented, arrowEdge: .bottom) {
+            strokeWidthDropdown
+        }
         .help(strokeSizeLabel(for: viewModel.selectedStrokeWidth, includeValueSeparator: true))
         .accessibilityLabel(strokeSizeLabel(for: viewModel.selectedStrokeWidth, includeValueSeparator: false))
         .toolbarGroupChrome()
         .toolbarCursor(.pointingHand)
     }
 
-    private func strokeWidthPreview(width: CGFloat, previewWidth: CGFloat, color: Color) -> some View {
-        Capsule()
-            .fill(color)
-            .frame(width: previewWidth, height: max(1, min(width, 12)))
-            .frame(width: previewWidth, height: 16, alignment: .center)
-            .accessibilityHidden(true)
+    private var strokeWidthDropdown: some View {
+        VStack(spacing: 4) {
+            ForEach(EditorViewModel.strokeWidthOptions, id: \.self) { width in
+                Button {
+                    viewModel.setStrokeWidth(width)
+                    isStrokeWidthDropdownPresented = false
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .opacity(viewModel.isStrokeWidthSelected(width) ? 1 : 0)
+                            .frame(width: 14)
+
+                        Image(nsImage: strokeWidthSymbolImage(
+                            width: width,
+                            color: viewModel.selectedStrokeColor.withAlphaComponent(viewModel.selectedOpacity),
+                            size: NSSize(width: 86, height: 18)
+                        ))
+                        .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(width: 126, height: 30, alignment: .leading)
+                    .background {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(
+                                viewModel.isStrokeWidthSelected(width)
+                                    ? Color.accentColor.opacity(0.14)
+                                    : Color.clear
+                            )
+                    }
+                    .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(strokeSizeLabel(for: width, includeValueSeparator: false))
+            }
+        }
+        .padding(8)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private func strokeSizeLabel(for width: CGFloat, includeValueSeparator: Bool) -> String {
@@ -1299,6 +1319,34 @@ private func cropFillSwatchImage(color: NSColor, size: CGFloat) -> NSImage {
     NSColor.separatorColor.withAlphaComponent(0.88).setStroke()
     circlePath.lineWidth = 1
     circlePath.stroke()
+    image.unlockFocus()
+
+    return image
+}
+
+private func strokeWidthSymbolImage(width: CGFloat, color: NSColor, size: NSSize) -> NSImage {
+    let image = NSImage(size: size)
+    let rect = CGRect(origin: .zero, size: size)
+    let strokeHeight = max(2, min(width, size.height - 4))
+    let strokeRect = CGRect(
+        x: 2,
+        y: rect.midY - strokeHeight / 2,
+        width: max(1, size.width - 4),
+        height: strokeHeight
+    )
+    let path = NSBezierPath(
+        roundedRect: strokeRect,
+        xRadius: strokeHeight / 2,
+        yRadius: strokeHeight / 2
+    )
+    image.isTemplate = false
+
+    image.lockFocus()
+    NSGraphicsContext.current?.imageInterpolation = .high
+    NSColor.clear.setFill()
+    rect.fill()
+    color.setFill()
+    path.fill()
     image.unlockFocus()
 
     return image
