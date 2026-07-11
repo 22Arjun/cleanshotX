@@ -27,6 +27,7 @@ final class AnnotationRendererRegistry {
     private let renderers: [AnnotationShapeRendering]
 
     init(renderers: [AnnotationShapeRendering] = [
+        DrawingAnnotationRenderer(),
         ArrowAnnotationRenderer(),
         LineAnnotationRenderer(),
         NumberingAnnotationRenderer(),
@@ -181,6 +182,106 @@ private extension [AnnotationObject] {
                 annotation.kind != .textHighlight &&
                 annotation.kind != .smartTextHighlight
         }
+    }
+}
+
+final class DrawingAnnotationRenderer: AnnotationShapeRendering {
+    let kind = AnnotationObjectKind.drawing
+
+    func makeLayer(for annotation: AnnotationObject, context: AnnotationRenderContext) -> CALayer {
+        let layer = CAShapeLayer()
+        layer.path = drawingPath(for: annotation)
+        layer.fillColor = NSColor.clear.cgColor
+        layer.strokeColor = annotation.style.strokeColor.cgColor
+        layer.lineWidth = max(1, annotation.style.lineWidth)
+        layer.lineCap = .round
+        layer.lineJoin = .round
+        layer.allowsEdgeAntialiasing = true
+        layer.opacity = Float(annotation.style.opacity)
+        return layer
+    }
+
+    func hitTest(_ point: CGPoint, annotation: AnnotationObject, tolerance: CGFloat) -> Bool {
+        guard case let .freehand(points) = annotation.geometry,
+              points.count >= 2
+        else {
+            return false
+        }
+
+        let expandedTolerance = max(tolerance, annotation.style.lineWidth / 2 + 5)
+        return zip(points, points.dropFirst()).contains { startPoint, endPoint in
+            point.distanceToLineSegment(start: startPoint, end: endPoint) <= expandedTolerance
+        }
+    }
+
+    func resizeHandles(for annotation: AnnotationObject, size: CGFloat) -> [AnnotationResizeHandle: CGRect] {
+        let normalizedRect = selectionRect(for: annotation)
+
+        guard normalizedRect.width > 0, normalizedRect.height > 0 else {
+            return [:]
+        }
+
+        return [
+            .topLeft: handleRect(centeredAt: CGPoint(x: normalizedRect.minX, y: normalizedRect.minY), size: size),
+            .topRight: handleRect(centeredAt: CGPoint(x: normalizedRect.maxX, y: normalizedRect.minY), size: size),
+            .bottomLeft: handleRect(centeredAt: CGPoint(x: normalizedRect.minX, y: normalizedRect.maxY), size: size),
+            .bottomRight: handleRect(centeredAt: CGPoint(x: normalizedRect.maxX, y: normalizedRect.maxY), size: size)
+        ]
+    }
+
+    func selectionPath(for annotation: AnnotationObject) -> CGPath {
+        CGPath(
+            roundedRect: selectionRect(for: annotation),
+            cornerWidth: 8,
+            cornerHeight: 8,
+            transform: nil
+        )
+    }
+
+    private func drawingPath(for annotation: AnnotationObject) -> CGPath {
+        let path = CGMutablePath()
+
+        guard case let .freehand(points) = annotation.geometry,
+              let firstPoint = points.first
+        else {
+            return path
+        }
+
+        path.move(to: firstPoint)
+
+        guard points.count > 2 else {
+            if let lastPoint = points.last {
+                path.addLine(to: lastPoint)
+            }
+            return path
+        }
+
+        for index in 1..<(points.count - 1) {
+            let currentPoint = points[index]
+            let nextPoint = points[index + 1]
+            let midPoint = CGPoint(
+                x: (currentPoint.x + nextPoint.x) / 2,
+                y: (currentPoint.y + nextPoint.y) / 2
+            )
+            path.addQuadCurve(to: midPoint, control: currentPoint)
+        }
+
+        if let lastPoint = points.last {
+            path.addLine(to: lastPoint)
+        }
+
+        return path
+    }
+
+    private func selectionRect(for annotation: AnnotationObject) -> CGRect {
+        guard case let .freehand(points) = annotation.geometry else {
+            return .zero
+        }
+
+        let inset = max(6, annotation.style.lineWidth / 2 + 5)
+        return points.boundsForEditor
+            .insetBy(dx: -inset, dy: -inset)
+            .standardizedForEditor
     }
 }
 
@@ -1618,5 +1719,28 @@ private extension CGPoint {
         )
 
         return hypot(x - projectedPoint.x, y - projectedPoint.y)
+    }
+}
+
+private extension [CGPoint] {
+    var boundsForEditor: CGRect {
+        guard let first else {
+            return .zero
+        }
+
+        var minX = first.x
+        var minY = first.y
+        var maxX = first.x
+        var maxY = first.y
+
+        for point in dropFirst() {
+            minX = Swift.min(minX, point.x)
+            minY = Swift.min(minY, point.y)
+            maxX = Swift.max(maxX, point.x)
+            maxY = Swift.max(maxY, point.y)
+        }
+
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            .standardizedForEditor
     }
 }

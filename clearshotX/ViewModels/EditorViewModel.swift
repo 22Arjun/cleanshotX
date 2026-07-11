@@ -11,6 +11,7 @@ import Foundation
 import Vision
 
 enum EditorTool: String, CaseIterable, Identifiable {
+    case drawing
     case arrow
     case line
     case numbering
@@ -99,6 +100,7 @@ enum EditorCropFrameHandle: Equatable, CaseIterable {
 }
 
 enum EditorToolbarAction: String, CaseIterable, Identifiable {
+    case drawing
     case arrow
     case line
     case numbering
@@ -122,6 +124,8 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .drawing:
+            "Drawing"
         case .arrow:
             "Arrow"
         case .line:
@@ -159,6 +163,8 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
 
     var systemImageName: String {
         switch self {
+        case .drawing:
+            "pencil.tip"
         case .arrow:
             "arrow.up.right"
         case .line:
@@ -196,6 +202,8 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
 
     var shortcutHint: String {
         switch self {
+        case .drawing:
+            "D"
         case .arrow:
             "A"
         case .line:
@@ -233,6 +241,8 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
 
     var tool: EditorTool? {
         switch self {
+        case .drawing:
+            .drawing
         case .arrow:
             .arrow
         case .line:
@@ -263,6 +273,7 @@ enum EditorToolbarAction: String, CaseIterable, Identifiable {
     }
 
     static let drawingTools: [EditorToolbarAction] = [
+        .drawing,
         .arrow,
         .line,
         .numbering,
@@ -539,7 +550,7 @@ final class EditorViewModel: ObservableObject {
             copy()
         case .save:
             save()
-        case .arrow, .line, .numbering, .rectangle, .filledRectangle, .oval, .text, .textHighlight, .smartTextHighlight, .highlight, .blurPixelate, .crop:
+        case .drawing, .arrow, .line, .numbering, .rectangle, .filledRectangle, .oval, .text, .textHighlight, .smartTextHighlight, .highlight, .blurPixelate, .crop:
             break
         }
     }
@@ -558,7 +569,7 @@ final class EditorViewModel: ObservableObject {
             canUndo
         case .redo:
             canRedo
-        case .arrow, .line, .numbering, .rectangle, .filledRectangle, .oval, .text, .textHighlight, .smartTextHighlight, .highlight, .blurPixelate, .crop, .copy, .save:
+        case .drawing, .arrow, .line, .numbering, .rectangle, .filledRectangle, .oval, .text, .textHighlight, .smartTextHighlight, .highlight, .blurPixelate, .crop, .copy, .save:
             true
         }
     }
@@ -981,6 +992,12 @@ final class EditorViewModel: ObservableObject {
                 return
             }
 
+            if activeTool == .drawing {
+                draftAnnotationObject = nil
+                activeDragSession = .drawing(tool: .drawing, startPoint: point, points: [point])
+                return
+            }
+
             guard let activeTool,
                   let draftAnnotation = annotationInteractionService.makeAnnotation(
                     tool: activeTool,
@@ -1051,6 +1068,11 @@ final class EditorViewModel: ObservableObject {
             if tool == .smartTextHighlight {
                 draftAnnotationObject = smartTextHighlightAnnotation(
                     for: updatedPoints,
+                    style: activeAnnotationStyle()
+                )
+            } else if tool == .drawing {
+                draftAnnotationObject = annotationInteractionService.makeDrawingAnnotation(
+                    points: updatedPoints,
                     style: activeAnnotationStyle()
                 )
             } else {
@@ -1219,6 +1241,9 @@ final class EditorViewModel: ObservableObject {
 
     func handleShortcut(_ shortcut: String) -> Bool {
         switch shortcut.lowercased() {
+        case "d":
+            selectTool(.drawing)
+            return true
         case "a":
             selectTool(.arrow)
             return true

@@ -2562,7 +2562,8 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
     }
 
     private var drawingToolIsActive: Bool {
-        activeTool == .arrow ||
+        activeTool == .drawing ||
+            activeTool == .arrow ||
             activeTool == .line ||
             activeTool == .numbering ||
             activeTool == .rectangle ||
@@ -2926,6 +2927,8 @@ private extension View {
     @ViewBuilder
     func editorKeyboardShortcut(for action: EditorToolbarAction) -> some View {
         switch action {
+        case .drawing:
+            keyboardShortcut("d", modifiers: [])
         case .arrow:
             keyboardShortcut("a", modifiers: [])
         case .line:

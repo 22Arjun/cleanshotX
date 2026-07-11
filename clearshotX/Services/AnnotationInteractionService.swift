@@ -22,6 +22,8 @@ protocol AnnotationInteractionServicing {
         style: AnnotationStyle
     ) -> AnnotationObject?
 
+    func makeDrawingAnnotation(points: [CGPoint], style: AnnotationStyle) -> AnnotationObject?
+
     func shouldCommit(_ annotation: AnnotationObject) -> Bool
     func hitTest(
         point: CGPoint,
@@ -45,6 +47,8 @@ final class AnnotationInteractionService: AnnotationInteractionServicing {
         style: AnnotationStyle
     ) -> AnnotationObject? {
         switch tool {
+        case .drawing:
+            return nil
         case .arrow:
             return AnnotationObject.arrow(start: startPoint, end: endPoint, style: style)
         case .line:
@@ -115,8 +119,20 @@ final class AnnotationInteractionService: AnnotationInteractionServicing {
         }
     }
 
+    func makeDrawingAnnotation(points: [CGPoint], style: AnnotationStyle) -> AnnotationObject? {
+        let simplifiedPoints = simplifiedFreehandPoints(points)
+
+        guard simplifiedPoints.count >= 2 else {
+            return nil
+        }
+
+        return AnnotationObject.drawing(points: simplifiedPoints, style: style)
+    }
+
     func shouldCommit(_ annotation: AnnotationObject) -> Bool {
         switch annotation.geometry {
+        case let .freehand(points):
+            return points.count >= 2 && points.totalDistance >= 8
         case let .arrow(start, end):
             return hypot(end.x - start.x, end.y - start.y) >= 8
         case let .rectangle(rect), let .oval(rect), let .highlight(rect), let .blurPixelate(rect):
@@ -161,6 +177,31 @@ final class AnnotationInteractionService: AnnotationInteractionServicing {
         return .empty
     }
 
+    private func simplifiedFreehandPoints(_ points: [CGPoint]) -> [CGPoint] {
+        guard var previousPoint = points.first else {
+            return []
+        }
+
+        var simplifiedPoints = [previousPoint]
+
+        for point in points.dropFirst() {
+            guard point.distance(to: previousPoint) >= 1.5 else {
+                continue
+            }
+
+            simplifiedPoints.append(point)
+            previousPoint = point
+        }
+
+        if let lastPoint = points.last,
+           simplifiedPoints.last != lastPoint,
+           lastPoint.distance(to: simplifiedPoints.last ?? lastPoint) >= 0.5 {
+            simplifiedPoints.append(lastPoint)
+        }
+
+        return simplifiedPoints
+    }
+
     private func textHighlightRect(from startPoint: CGPoint, to endPoint: CGPoint, lineWidth: CGFloat) -> CGRect {
         let normalizedWidth = abs(endPoint.x - startPoint.x)
         let markerHeight = max(12, lineWidth * 4.5)
@@ -188,6 +229,24 @@ private extension [AnnotationObject] {
             annotation.kind == .blurPixelate
         } + newestFirst.filter { annotation in
             annotation.kind == .highlight
+        }
+    }
+}
+
+private extension CGPoint {
+    func distance(to point: CGPoint) -> CGFloat {
+        hypot(x - point.x, y - point.y)
+    }
+}
+
+private extension [CGPoint] {
+    var totalDistance: CGFloat {
+        guard count > 1 else {
+            return 0
+        }
+
+        return zip(self, dropFirst()).reduce(0) { distance, points in
+            distance + points.0.distance(to: points.1)
         }
     }
 }

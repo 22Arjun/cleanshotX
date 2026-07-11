@@ -9,6 +9,7 @@ import AppKit
 import Foundation
 
 enum AnnotationObjectKind: String, CaseIterable, Identifiable {
+    case drawing
     case arrow
     case line
     case numbering
@@ -36,6 +37,7 @@ enum AnnotationResizeHandle: String, CaseIterable {
 }
 
 enum AnnotationGeometry: Equatable {
+    case freehand([CGPoint])
     case arrow(start: CGPoint, end: CGPoint)
     case rectangle(CGRect)
     case oval(CGRect)
@@ -47,6 +49,8 @@ enum AnnotationGeometry: Equatable {
 
     var bounds: CGRect {
         switch self {
+        case let .freehand(points):
+            return points.boundsForEditor
         case let .arrow(start, end):
             return CGRect(
                 x: min(start.x, end.x),
@@ -65,6 +69,12 @@ enum AnnotationGeometry: Equatable {
 
     func translated(by translation: CGSize) -> AnnotationGeometry {
         switch self {
+        case let .freehand(points):
+            return .freehand(
+                points.map { point in
+                    CGPoint(x: point.x + translation.width, y: point.y + translation.height)
+                }
+            )
         case let .arrow(start, end):
             return .arrow(
                 start: CGPoint(x: start.x + translation.width, y: start.y + translation.height),
@@ -93,6 +103,12 @@ enum AnnotationGeometry: Equatable {
 
     func rotatedClockwise(in canvasSize: CGSize) -> AnnotationGeometry {
         switch self {
+        case let .freehand(points):
+            return .freehand(
+                points.map { point in
+                    point.rotatedClockwise(in: canvasSize)
+                }
+            )
         case let .arrow(start, end):
             return .arrow(
                 start: start.rotatedClockwise(in: canvasSize),
@@ -121,6 +137,12 @@ enum AnnotationGeometry: Equatable {
 
     func flippedHorizontally(in canvasSize: CGSize) -> AnnotationGeometry {
         switch self {
+        case let .freehand(points):
+            return .freehand(
+                points.map { point in
+                    point.flippedHorizontally(in: canvasSize)
+                }
+            )
         case let .arrow(start, end):
             return .arrow(
                 start: start.flippedHorizontally(in: canvasSize),
@@ -149,6 +171,12 @@ enum AnnotationGeometry: Equatable {
 
     func flippedVertically(in canvasSize: CGSize) -> AnnotationGeometry {
         switch self {
+        case let .freehand(points):
+            return .freehand(
+                points.map { point in
+                    point.flippedVertically(in: canvasSize)
+                }
+            )
         case let .arrow(start, end):
             return .arrow(
                 start: start.flippedVertically(in: canvasSize),
@@ -177,6 +205,61 @@ enum AnnotationGeometry: Equatable {
 
     func resized(using handle: AnnotationResizeHandle, to point: CGPoint) -> AnnotationGeometry {
         switch self {
+        case let .freehand(points):
+            let normalizedRect = points.boundsForEditor
+
+            guard normalizedRect.width >= 1, normalizedRect.height >= 1 else {
+                return self
+            }
+
+            let targetRect: CGRect
+            switch handle {
+            case .topLeft:
+                targetRect = CGRect(
+                    x: point.x,
+                    y: point.y,
+                    width: normalizedRect.maxX - point.x,
+                    height: normalizedRect.maxY - point.y
+                ).standardizedForEditor
+            case .topRight:
+                targetRect = CGRect(
+                    x: normalizedRect.minX,
+                    y: point.y,
+                    width: point.x - normalizedRect.minX,
+                    height: normalizedRect.maxY - point.y
+                ).standardizedForEditor
+            case .bottomLeft:
+                targetRect = CGRect(
+                    x: point.x,
+                    y: normalizedRect.minY,
+                    width: normalizedRect.maxX - point.x,
+                    height: point.y - normalizedRect.minY
+                ).standardizedForEditor
+            case .bottomRight:
+                targetRect = CGRect(
+                    x: normalizedRect.minX,
+                    y: normalizedRect.minY,
+                    width: point.x - normalizedRect.minX,
+                    height: point.y - normalizedRect.minY
+                ).standardizedForEditor
+            case .startPoint, .endPoint:
+                return self
+            }
+
+            guard targetRect.width >= 1, targetRect.height >= 1 else {
+                return self
+            }
+
+            return .freehand(
+                points.map { point in
+                    let xProgress = (point.x - normalizedRect.minX) / normalizedRect.width
+                    let yProgress = (point.y - normalizedRect.minY) / normalizedRect.height
+                    return CGPoint(
+                        x: targetRect.minX + xProgress * targetRect.width,
+                        y: targetRect.minY + yProgress * targetRect.height
+                    )
+                }
+            )
         case let .arrow(start, end):
             switch handle {
             case .startPoint:
@@ -697,6 +780,19 @@ struct AnnotationObject: Identifiable, Equatable {
         self.number = number
     }
 
+    static func drawing(
+        id: UUID = UUID(),
+        points: [CGPoint],
+        style: AnnotationStyle
+    ) -> AnnotationObject {
+        AnnotationObject(
+            id: id,
+            kind: .drawing,
+            geometry: .freehand(points),
+            style: style
+        )
+    }
+
     static func arrow(
         id: UUID = UUID(),
         start: CGPoint,
@@ -985,6 +1081,29 @@ private extension [CGRect] {
         }
 
         return unionRect.standardizedForEditor
+    }
+}
+
+private extension [CGPoint] {
+    var boundsForEditor: CGRect {
+        guard let first else {
+            return .zero
+        }
+
+        var minX = first.x
+        var minY = first.y
+        var maxX = first.x
+        var maxY = first.y
+
+        for point in dropFirst() {
+            minX = Swift.min(minX, point.x)
+            minY = Swift.min(minY, point.y)
+            maxX = Swift.max(maxX, point.x)
+            maxY = Swift.max(maxY, point.y)
+        }
+
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            .standardizedForEditor
     }
 }
 
