@@ -689,7 +689,11 @@ final class NumberingAnnotationRenderer: AnnotationShapeRendering {
         let rect = badgeRect(for: annotation)
         let textLayer = CATextLayer()
         textLayer.frame = textFrame(for: rect)
-        textLayer.string = attributedNumber(number, in: rect)
+        textLayer.string = attributedNumber(
+            number,
+            in: rect,
+            badgeColor: annotation.style.strokeColor
+        )
         textLayer.alignmentMode = .center
         textLayer.truncationMode = .none
         textLayer.isWrapped = false
@@ -741,7 +745,11 @@ final class NumberingAnnotationRenderer: AnnotationShapeRendering {
         )
     }
 
-    private func attributedNumber(_ number: Int, in rect: CGRect) -> NSAttributedString {
+    private func attributedNumber(
+        _ number: Int,
+        in rect: CGRect,
+        badgeColor: NSColor
+    ) -> NSAttributedString {
         let text = String(number)
         let digitCount = CGFloat(text.count)
         let widthScale = min(0.54, 0.78 / max(1, digitCount * 0.56))
@@ -753,10 +761,23 @@ final class NumberingAnnotationRenderer: AnnotationShapeRendering {
             string: text,
             attributes: [
                 .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
-                .foregroundColor: NSColor.white,
+                .foregroundColor: numberTextColor(for: badgeColor),
                 .paragraphStyle: paragraphStyle
             ]
         )
+    }
+
+    private func numberTextColor(for badgeColor: NSColor) -> NSColor {
+        guard let rgbColor = badgeColor.usingColorSpace(.deviceRGB) else {
+            return .white
+        }
+
+        let luminance = 0.2126 * rgbColor.redComponent +
+            0.7152 * rgbColor.greenComponent +
+            0.0722 * rgbColor.blueComponent
+        return luminance > 0.62
+            ? NSColor.black.withAlphaComponent(0.86)
+            : .white
     }
 }
 
