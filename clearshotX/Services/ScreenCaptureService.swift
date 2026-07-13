@@ -8,9 +8,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
-import ImageIO
 import ScreenCaptureKit
-import UniformTypeIdentifiers
 
 enum ScreenCaptureServiceError: LocalizedError {
     case permissionDenied
@@ -18,9 +16,6 @@ enum ScreenCaptureServiceError: LocalizedError {
     case noWindowAvailable
     case invalidRegion
     case noImageReturned
-    case pngDestinationCreationFailed
-    case pngWriteFailed
-    case appSupportDirectoryUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -34,12 +29,6 @@ enum ScreenCaptureServiceError: LocalizedError {
             "The selected capture region is not valid."
         case .noImageReturned:
             "ScreenCaptureKit did not return an image."
-        case .pngDestinationCreationFailed:
-            "Could not create a PNG destination for the capture."
-        case .pngWriteFailed:
-            "Could not write the captured PNG to disk."
-        case .appSupportDirectoryUnavailable:
-            "Could not locate the app support directory."
         }
     }
 
@@ -54,6 +43,12 @@ enum ScreenCaptureServiceError: LocalizedError {
 }
 
 final class ScreenCaptureService {
+    private let captureStore: CaptureStoring
+
+    init(captureStore: CaptureStoring? = nil) {
+        self.captureStore = captureStore ?? CaptureStore()
+    }
+
     func hasScreenRecordingPermission() -> Bool {
         CGPreflightScreenCaptureAccess()
     }
@@ -106,7 +101,7 @@ final class ScreenCaptureService {
             configuration: configuration
         )
 
-        let fileURL = try savePNG(cgImage)
+        let fileURL = try captureStore.store(cgImage)
         let image = NSImage(
             cgImage: cgImage,
             size: NSSize(width: cgImage.width, height: cgImage.height)
@@ -182,7 +177,7 @@ final class ScreenCaptureService {
             configuration: configuration
         )
 
-        let fileURL = try savePNG(cgImage)
+        let fileURL = try captureStore.store(cgImage)
         let image = NSImage(
             cgImage: cgImage,
             size: NSSize(width: cgImage.width, height: cgImage.height)
@@ -241,7 +236,7 @@ final class ScreenCaptureService {
             configuration: configuration
         )
 
-        let fileURL = try savePNG(cgImage)
+        let fileURL = try captureStore.store(cgImage)
         let image = NSImage(
             cgImage: cgImage,
             size: NSSize(width: cgImage.width, height: cgImage.height)
@@ -309,48 +304,6 @@ final class ScreenCaptureService {
         )
     }
 
-    private func savePNG(_ image: CGImage) throws -> URL {
-        let directoryURL = try captureDirectoryURL()
-        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-
-        let fileURL = directoryURL.appendingPathComponent("\(captureFileName()).png")
-
-        guard let destination = CGImageDestinationCreateWithURL(
-            fileURL as CFURL,
-            UTType.png.identifier as CFString,
-            1,
-            nil
-        ) else {
-            throw ScreenCaptureServiceError.pngDestinationCreationFailed
-        }
-
-        CGImageDestinationAddImage(destination, image, nil)
-
-        guard CGImageDestinationFinalize(destination) else {
-            throw ScreenCaptureServiceError.pngWriteFailed
-        }
-
-        return fileURL
-    }
-
-    private func captureDirectoryURL() throws -> URL {
-        guard let applicationSupportURL = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else {
-            throw ScreenCaptureServiceError.appSupportDirectoryUnavailable
-        }
-
-        return applicationSupportURL
-            .appendingPathComponent("ClearshotX", isDirectory: true)
-            .appendingPathComponent("Captures", isDirectory: true)
-    }
-
-    private func captureFileName() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        return "ClearshotX-\(formatter.string(from: Date()))"
-    }
 }
 
 private extension CGRect {

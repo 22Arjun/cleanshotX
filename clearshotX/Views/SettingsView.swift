@@ -8,9 +8,9 @@
 import SwiftUI
 
 #if DEBUG
-private let settingsWindowHeight: CGFloat = 500
+private let settingsWindowHeight: CGFloat = 720
 #else
-private let settingsWindowHeight: CGFloat = 430
+private let settingsWindowHeight: CGFloat = 630
 #endif
 
 struct SettingsView: View {
@@ -66,6 +66,79 @@ struct SettingsView: View {
                         Text(viewModel.isCaptureSoundEnabled ? "Play a subtle sound after every successful capture." : "Keep successful captures silent.")
                             .font(.system(size: 12))
                             .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                    }
+                }
+                .toggleStyle(.switch)
+                .controlSize(.regular)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Saving", systemImage: "folder")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .labelColor))
+
+                Picker(
+                    "Save destination",
+                    selection: Binding(
+                        get: { viewModel.captureSaveMode },
+                        set: { viewModel.setCaptureSaveMode($0) }
+                    )
+                ) {
+                    ForEach(CaptureSaveMode.allCases) { mode in
+                        Text(mode.title)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 300)
+
+                if viewModel.captureSaveMode == .fixedFolder {
+                    HStack(spacing: 10) {
+                        Image(systemName: "folder.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+
+                        Text(viewModel.captureSaveFolderPath ?? "Choose a folder")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Button("Choose Folder") {
+                            viewModel.chooseCaptureSaveFolder()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .frame(width: 420)
+                } else {
+                    Text("Show the macOS Save dialog and remember its most recent location.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                }
+
+                Toggle(
+                    isOn: Binding(
+                        get: { viewModel.isTemporaryCaptureCleanupEnabled },
+                        set: { viewModel.setTemporaryCaptureCleanupEnabled($0) }
+                    )
+                ) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Automatically remove temporary captures")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Color(nsColor: .labelColor))
+
+                        Text(
+                            viewModel.isTemporaryCaptureCleanupEnabled
+                                ? "Remove unsaved working captures after 24 hours."
+                                : "Keep unsaved working captures until you delete them."
+                        )
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                     }
                 }
                 .toggleStyle(.switch)

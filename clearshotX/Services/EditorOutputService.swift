@@ -6,7 +6,6 @@
 //
 
 import AppKit
-import UniformTypeIdentifiers
 
 @MainActor
 protocol EditorOutputServicing {
@@ -20,13 +19,16 @@ protocol EditorOutputServicing {
 final class EditorOutputService: EditorOutputServicing {
     private let clipboardService: ClipboardService
     private let flattenedImageRenderer: EditorFlattenedImageRendering
+    private let captureExportService: CaptureExportServicing
 
     init(
         clipboardService: ClipboardService? = nil,
-        flattenedImageRenderer: EditorFlattenedImageRendering? = nil
+        flattenedImageRenderer: EditorFlattenedImageRendering? = nil,
+        captureExportService: CaptureExportServicing? = nil
     ) {
         self.clipboardService = clipboardService ?? ClipboardService()
         self.flattenedImageRenderer = flattenedImageRenderer ?? EditorFlattenedImageRenderer()
+        self.captureExportService = captureExportService ?? CaptureExportService()
     }
 
     @discardableResult
@@ -47,24 +49,12 @@ final class EditorOutputService: EditorOutputServicing {
             return
         }
 
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        panel.canCreateDirectories = true
-        panel.isExtensionHidden = false
-        panel.nameFieldStringValue = defaultFileName(sourceFileURL: sourceFileURL)
-
-        NSApp.activate(ignoringOtherApps: true)
-        panel.begin { response in
-            guard response == .OK,
-                  let destinationURL = panel.url
-            else {
-                return
-            }
-
-            do {
-                try pngData.write(to: destinationURL, options: .atomic)
-            } catch {
-                NSSound.beep()
+        captureExportService.savePNGData(
+            pngData,
+            suggestedFileName: defaultFileName(sourceFileURL: sourceFileURL)
+        ) { result in
+            if case let .failure(error) = result {
+                Self.presentSaveError(error)
             }
         }
     }
@@ -78,6 +68,12 @@ final class EditorOutputService: EditorOutputServicing {
         }
 
         return "\(baseName)-annotated.png"
+    }
+
+    private static func presentSaveError(_ error: CaptureExportError) {
+        let alert = NSAlert(error: error)
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 }
 

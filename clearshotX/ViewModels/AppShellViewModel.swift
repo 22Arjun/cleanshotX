@@ -17,8 +17,13 @@ final class AppShellViewModel: ObservableObject {
     @Published private(set) var isCapturing = false
     @Published private(set) var activeHotkeyMode: GlobalHotkeyMode = .preferred
     @Published private(set) var isCaptureSoundEnabled: Bool
+    @Published private(set) var captureSaveMode: CaptureSaveMode
+    @Published private(set) var captureSaveFolderPath: String?
+    @Published private(set) var isTemporaryCaptureCleanupEnabled: Bool
 
     private let screenCaptureService: ScreenCaptureService
+    private let captureStore: CaptureStoring
+    private let captureSavePreferences: CaptureSavePreferences
     private let captureSoundService: CaptureSoundService
     private let clipboardService: ClipboardService
     private let editorWindowManager: EditorWindowManager
@@ -37,6 +42,9 @@ final class AppShellViewModel: ObservableObject {
 
     init(
         screenCaptureService: ScreenCaptureService? = nil,
+        captureStore: CaptureStoring? = nil,
+        captureSavePreferences: CaptureSavePreferences? = nil,
+        captureExportService: CaptureExportServicing? = nil,
         captureSoundService: CaptureSoundService? = nil,
         clipboardService: ClipboardService? = nil,
         editorWindowManager: EditorWindowManager? = nil,
@@ -50,11 +58,30 @@ final class AppShellViewModel: ObservableObject {
         menuBarReadyHintManager: MenuBarReadyHintManager? = nil,
         alertPresenter: AlertPresenter? = nil
     ) {
-        self.screenCaptureService = screenCaptureService ?? ScreenCaptureService()
+        let resolvedSavePreferences = captureSavePreferences ?? CaptureSavePreferences()
+        let resolvedCaptureStore = captureStore ?? CaptureStore(
+            isCleanupEnabled: { resolvedSavePreferences.isTemporaryCaptureCleanupEnabled }
+        )
+        let resolvedExportService = captureExportService ?? CaptureExportService(
+            preferences: resolvedSavePreferences
+        )
+
+        self.screenCaptureService = screenCaptureService ?? ScreenCaptureService(
+            captureStore: resolvedCaptureStore
+        )
+        self.captureStore = resolvedCaptureStore
+        self.captureSavePreferences = resolvedSavePreferences
         self.captureSoundService = captureSoundService ?? CaptureSoundService()
         self.clipboardService = clipboardService ?? ClipboardService()
-        self.editorWindowManager = editorWindowManager ?? EditorWindowManager()
-        self.quickAccessOverlayManager = quickAccessOverlayManager ?? QuickAccessOverlayManager()
+        self.editorWindowManager = editorWindowManager ?? EditorWindowManager(
+            outputService: EditorOutputService(
+                captureExportService: resolvedExportService
+            )
+        )
+        self.quickAccessOverlayManager = quickAccessOverlayManager ?? QuickAccessOverlayManager(
+            captureExportService: resolvedExportService,
+            captureStore: resolvedCaptureStore
+        )
         self.regionSelectionManager = regionSelectionManager ?? RegionSelectionManager()
         self.windowSelectionManager = windowSelectionManager ?? WindowSelectionManager()
         self.hotkeyConflictResolutionManager = hotkeyConflictResolutionManager ?? HotkeyConflictResolutionManager()
@@ -64,6 +91,9 @@ final class AppShellViewModel: ObservableObject {
         self.menuBarReadyHintManager = menuBarReadyHintManager ?? MenuBarReadyHintManager()
         self.alertPresenter = alertPresenter ?? AlertPresenter()
         self.isCaptureSoundEnabled = self.captureSoundService.isEnabled
+        self.captureSaveMode = resolvedSavePreferences.mode
+        self.captureSaveFolderPath = resolvedSavePreferences.fixedFolderDisplayPath
+        self.isTemporaryCaptureCleanupEnabled = resolvedSavePreferences.isTemporaryCaptureCleanupEnabled
 
         self.menuBarStatusItemManager.configure(viewModel: self)
         observeAppActivation()
@@ -174,6 +204,65 @@ final class AppShellViewModel: ObservableObject {
         isCaptureSoundEnabled = isEnabled
     }
 
+    func setCaptureSaveMode(_ mode: CaptureSaveMode) {
+        switch mode {
+        case .askEveryTime:
+            captureSavePreferences.mode = .askEveryTime
+            refreshCaptureSavePreferences()
+        case .fixedFolder:
+            if captureSavePreferences.hasFixedFolder {
+                captureSavePreferences.mode = .fixedFolder
+                refreshCaptureSavePreferences()
+            } else {
+                chooseCaptureSaveFolder()
+            }
+        }
+    }
+
+    func setTemporaryCaptureCleanupEnabled(_ isEnabled: Bool) {
+        captureSavePreferences.isTemporaryCaptureCleanupEnabled = isEnabled
+        isTemporaryCaptureCleanupEnabled = isEnabled
+
+        guard isEnabled else {
+            return
+        }
+
+        try? captureStore.removeExpiredCaptures()
+    }
+
+    func chooseCaptureSaveFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Screenshot Folder"
+        panel.message = "ClearshotX will save screenshots directly to this folder."
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = captureSavePreferences.lastSaveDirectoryURL
+
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self] response in
+            guard let self,
+                  response == .OK,
+                  let folderURL = panel.url
+            else {
+                return
+            }
+
+            do {
+                try self.captureSavePreferences.setFixedFolder(folderURL)
+                self.refreshCaptureSavePreferences()
+            } catch {
+                let localizedError = error as? LocalizedError
+                self.alertPresenter.showError(
+                    title: localizedError?.errorDescription ?? "Save Folder Unavailable",
+                    message: localizedError?.recoverySuggestion ?? error.localizedDescription
+                )
+            }
+        }
+    }
+
     func openDefaultShortcutSetupFromSettings() {
         showHotkeyResolutionFlow(context: .settings)
     }
@@ -227,6 +316,11 @@ final class AppShellViewModel: ObservableObject {
                 await self?.configureGlobalHotkeysOnLaunch()
             }
         }
+    }
+
+    private func refreshCaptureSavePreferences() {
+        captureSaveMode = captureSavePreferences.mode
+        captureSaveFolderPath = captureSavePreferences.fixedFolderDisplayPath
     }
 
     private func configureGlobalHotkeysOnLaunch() async {

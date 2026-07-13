@@ -7,7 +7,6 @@
 
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 @MainActor
 final class QuickAccessOverlayManager {
@@ -21,6 +20,8 @@ final class QuickAccessOverlayManager {
     private let slideDistance: CGFloat = 14
     private let dismissDelay: TimeInterval = 5
     private let pinnedPanelSpacing: CGFloat = 14
+    private let captureExportService: CaptureExportServicing
+    private let captureStore: CaptureStoring
 
     private var panelSize: NSSize {
         NSSize(
@@ -33,6 +34,14 @@ final class QuickAccessOverlayManager {
     private var dismissWorkItem: DispatchWorkItem?
     private var currentCapture: CaptureResult?
     private var pinnedPanels: [PinnedPanel] = []
+
+    init(
+        captureExportService: CaptureExportServicing? = nil,
+        captureStore: CaptureStoring? = nil
+    ) {
+        self.captureExportService = captureExportService ?? CaptureExportService()
+        self.captureStore = captureStore ?? CaptureStore()
+    }
 
     func show(
         capture: CaptureResult,
@@ -188,35 +197,19 @@ final class QuickAccessOverlayManager {
     private func save(_ capture: CaptureResult) {
         dismissWorkItem?.cancel()
 
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        panel.canCreateDirectories = true
-        panel.isExtensionHidden = false
-        panel.nameFieldStringValue = capture.fileURL.lastPathComponent
-
-        NSApp.activate(ignoringOtherApps: true)
-        panel.begin { [weak self] response in
-            Task { @MainActor in
-                guard response == .OK, let destinationURL = panel.url else {
-                    self?.scheduleDismiss()
-                    return
-                }
-
-                do {
-                    if destinationURL != capture.fileURL, FileManager.default.fileExists(atPath: destinationURL.path) {
-                        try FileManager.default.removeItem(at: destinationURL)
-                    }
-
-                    if destinationURL != capture.fileURL {
-                        try FileManager.default.copyItem(at: capture.fileURL, to: destinationURL)
-                    }
-
-                    self?.scheduleDismiss()
-                } catch {
-                    NSSound.beep()
-                    self?.scheduleDismiss()
-                }
+        captureExportService.saveCapture(
+            at: capture.fileURL,
+            suggestedFileName: capture.fileURL.lastPathComponent
+        ) { [weak self] result in
+            guard let self else {
+                return
             }
+
+            if case let .failure(error) = result {
+                presentSaveError(error)
+            }
+
+            scheduleDismiss()
         }
     }
 
@@ -278,14 +271,18 @@ final class QuickAccessOverlayManager {
 
     private func delete(_ capture: CaptureResult) {
         do {
-            if FileManager.default.fileExists(atPath: capture.fileURL.path) {
-                try FileManager.default.removeItem(at: capture.fileURL)
-            }
+            try captureStore.removeCapture(at: capture.fileURL)
         } catch {
             NSSound.beep()
         }
 
         dismiss(animated: true)
+    }
+
+    private func presentSaveError(_ error: CaptureExportError) {
+        let alert = NSAlert(error: error)
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     private func pinnedSize(for capture: CaptureResult) -> NSSize {

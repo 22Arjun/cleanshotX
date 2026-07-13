@@ -21,8 +21,13 @@ final class EditorWindowManager {
     private let canvasVerticalPadding: CGFloat = 112
     private let screenHorizontalMargin: CGFloat = 20
     private let screenVerticalMargin: CGFloat = 24
+    private let outputService: EditorOutputServicing
 
     private var windows: [UUID: EditorWindowRecord] = [:]
+
+    init(outputService: EditorOutputServicing? = nil) {
+        self.outputService = outputService ?? EditorOutputService()
+    }
 
     func showEditor(for capture: CaptureResult) {
         showEditor(
@@ -37,7 +42,11 @@ final class EditorWindowManager {
         sourceFileURL: URL? = nil,
         preferredScreen: NSScreen? = nil
     ) {
-        let viewModel = EditorViewModel(image: image, sourceFileURL: sourceFileURL)
+        let viewModel = EditorViewModel(
+            image: image,
+            sourceFileURL: sourceFileURL,
+            outputService: outputService
+        )
         let editorView = EditorView(viewModel: viewModel)
         let windowID = viewModel.id
         let targetScreen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first

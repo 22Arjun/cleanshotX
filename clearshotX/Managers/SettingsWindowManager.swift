@@ -11,9 +11,9 @@ import SwiftUI
 @MainActor
 final class SettingsWindowManager {
     #if DEBUG
-    private let windowSize = NSSize(width: 520, height: 430)
+    private let windowSize = NSSize(width: 520, height: 720)
     #else
-    private let windowSize = NSSize(width: 520, height: 360)
+    private let windowSize = NSSize(width: 520, height: 630)
     #endif
 
     private var window: NSWindow?
