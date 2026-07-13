@@ -42,6 +42,7 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
     private var mouseDownLocation: CGPoint?
     private var hasStartedDrag = false
     private var shouldKeepSourceVisible = false
+    private var didStartSecurityScopedAccess = false
 
     override var isFlipped: Bool {
         true
@@ -75,6 +76,7 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
             return
         }
 
+        didStartSecurityScopedAccess = fileURL.startAccessingSecurityScopedResource()
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             NSSound.beep()
             resetDragState()
@@ -150,6 +152,11 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
     }
 
     private func resetDragState() {
+        if didStartSecurityScopedAccess {
+            fileURL?.stopAccessingSecurityScopedResource()
+            didStartSecurityScopedAccess = false
+        }
+
         mouseDownLocation = nil
         hasStartedDrag = false
         shouldKeepSourceVisible = false

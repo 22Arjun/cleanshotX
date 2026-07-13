@@ -95,31 +95,41 @@ struct SettingsView: View {
                 .labelsHidden()
                 .frame(width: 300)
 
-                if viewModel.captureSaveMode == .fixedFolder {
-                    HStack(spacing: 10) {
-                        Image(systemName: "folder.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
+                HStack(spacing: 10) {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
 
-                        Text(viewModel.captureSaveFolderPath ?? "Choose a folder")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Button("Choose Folder") {
-                            viewModel.chooseCaptureSaveFolder()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                    .frame(width: 420)
-                } else {
-                    Text("Show the macOS Save dialog and remember its most recent location.")
+                    Text(viewModel.captureSaveFolderPath ?? "Choose a folder")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button(
+                        saveFolderButtonTitle
+                    ) {
+                        if viewModel.captureSaveMode == .fixedFolder {
+                            viewModel.chooseCaptureSaveFolder()
+                        } else if !viewModel.hasDefaultCaptureFolderAuthorization {
+                            viewModel.authorizeDefaultCaptureFolder()
+                        } else {
+                            viewModel.revealCaptureSaveFolder()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
+                .frame(width: 420)
+
+                Text(
+                    viewModel.captureSaveMode == .fixedFolder
+                        ? "Captures and saves use this folder automatically."
+                        : "Captures are stored here immediately. Save asks for a destination."
+                )
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
 
                 Toggle(
                     isOn: Binding(
@@ -128,14 +138,14 @@ struct SettingsView: View {
                     )
                 ) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Automatically remove temporary captures")
+                        Text("Clean up temporary work files")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(Color(nsColor: .labelColor))
 
                         Text(
                             viewModel.isTemporaryCaptureCleanupEnabled
-                                ? "Remove unsaved working captures after 24 hours."
-                                : "Keep unsaved working captures until you delete them."
+                                ? "Remove old temporary work files after 24 hours. Saved screenshots are kept."
+                                : "Disabled by default. Saved screenshots are always kept."
                         )
                         .font(.system(size: 12))
                         .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
@@ -159,6 +169,16 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
+
+                if !viewModel.hasDefaultCaptureFolderAuthorization {
+                    Button {
+                        viewModel.authorizeDefaultCaptureFolder()
+                    } label: {
+                        Label("Grant Screenshot Folder Access", systemImage: "folder.badge.plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                }
             }
 
             #if DEBUG
@@ -188,6 +208,16 @@ struct SettingsView: View {
         .padding(28)
         .frame(width: 520, height: settingsWindowHeight, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var saveFolderButtonTitle: String {
+        if viewModel.captureSaveMode == .fixedFolder {
+            return "Choose Folder"
+        }
+
+        return viewModel.hasDefaultCaptureFolderAuthorization
+            ? "Show Folder"
+            : "Grant Access"
     }
 
     private func settingsRow(_ title: String, shortcut: String) -> some View {

@@ -44,6 +44,7 @@ enum ScreenCaptureServiceError: LocalizedError {
 
 final class ScreenCaptureService {
     private let captureStore: CaptureStoring
+    private var didRequestScreenRecordingPermission = false
 
     init(captureStore: CaptureStoring? = nil) {
         self.captureStore = captureStore ?? CaptureStore()
@@ -55,7 +56,12 @@ final class ScreenCaptureService {
 
     @discardableResult
     func requestScreenRecordingPermission() -> Bool {
-        CGRequestScreenCaptureAccess()
+        guard !didRequestScreenRecordingPermission else {
+            return hasScreenRecordingPermission()
+        }
+
+        didRequestScreenRecordingPermission = true
+        return CGRequestScreenCaptureAccess()
     }
 
     func openScreenRecordingSettings() {
@@ -67,8 +73,7 @@ final class ScreenCaptureService {
     }
 
     func captureFullScreen() async throws -> CaptureResult {
-        guard hasScreenRecordingPermission() else {
-            requestScreenRecordingPermission()
+        guard ensureScreenRecordingPermission() else {
             throw ScreenCaptureServiceError.permissionDenied
         }
 
@@ -117,8 +122,7 @@ final class ScreenCaptureService {
     }
 
     func captureRegion(_ region: CGRect) async throws -> CaptureResult {
-        guard hasScreenRecordingPermission() else {
-            requestScreenRecordingPermission()
+        guard ensureScreenRecordingPermission() else {
             throw ScreenCaptureServiceError.permissionDenied
         }
 
@@ -193,8 +197,7 @@ final class ScreenCaptureService {
     }
 
     func availableWindows() async throws -> [SCWindow] {
-        guard hasScreenRecordingPermission() else {
-            requestScreenRecordingPermission()
+        guard ensureScreenRecordingPermission() else {
             throw ScreenCaptureServiceError.permissionDenied
         }
 
@@ -212,8 +215,7 @@ final class ScreenCaptureService {
     }
 
     func captureWindow(_ window: SCWindow) async throws -> CaptureResult {
-        guard hasScreenRecordingPermission() else {
-            requestScreenRecordingPermission()
+        guard ensureScreenRecordingPermission() else {
             throw ScreenCaptureServiceError.permissionDenied
         }
 
@@ -259,6 +261,15 @@ final class ScreenCaptureService {
         return displays.first { display in
             display.displayID == mainScreenDisplayID
         } ?? displays.first
+    }
+
+    private func ensureScreenRecordingPermission() -> Bool {
+        if hasScreenRecordingPermission() {
+            return true
+        }
+
+        _ = requestScreenRecordingPermission()
+        return hasScreenRecordingPermission()
     }
 
     private func display(containing region: CGRect, from displays: [SCDisplay]) -> SCDisplay? {

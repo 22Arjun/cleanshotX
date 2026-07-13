@@ -19,6 +19,7 @@ final class AppShellViewModel: ObservableObject {
     @Published private(set) var isCaptureSoundEnabled: Bool
     @Published private(set) var captureSaveMode: CaptureSaveMode
     @Published private(set) var captureSaveFolderPath: String?
+    @Published private(set) var hasDefaultCaptureFolderAuthorization: Bool
     @Published private(set) var isTemporaryCaptureCleanupEnabled: Bool
 
     private let screenCaptureService: ScreenCaptureService
@@ -60,6 +61,7 @@ final class AppShellViewModel: ObservableObject {
     ) {
         let resolvedSavePreferences = captureSavePreferences ?? CaptureSavePreferences()
         let resolvedCaptureStore = captureStore ?? CaptureStore(
+            preferences: resolvedSavePreferences,
             isCleanupEnabled: { resolvedSavePreferences.isTemporaryCaptureCleanupEnabled }
         )
         let resolvedExportService = captureExportService ?? CaptureExportService(
@@ -92,7 +94,8 @@ final class AppShellViewModel: ObservableObject {
         self.alertPresenter = alertPresenter ?? AlertPresenter()
         self.isCaptureSoundEnabled = self.captureSoundService.isEnabled
         self.captureSaveMode = resolvedSavePreferences.mode
-        self.captureSaveFolderPath = resolvedSavePreferences.fixedFolderDisplayPath
+        self.captureSaveFolderPath = resolvedSavePreferences.captureFolderDisplayPath
+        self.hasDefaultCaptureFolderAuthorization = resolvedSavePreferences.hasDefaultFolderAuthorization
         self.isTemporaryCaptureCleanupEnabled = resolvedSavePreferences.isTemporaryCaptureCleanupEnabled
 
         self.menuBarStatusItemManager.configure(viewModel: self)
@@ -219,6 +222,72 @@ final class AppShellViewModel: ObservableObject {
         }
     }
 
+    func revealCaptureSaveFolder() {
+        if captureSaveMode == .askEveryTime,
+           !captureSavePreferences.hasDefaultFolderAuthorization {
+            authorizeDefaultCaptureFolder()
+            return
+        }
+
+        do {
+            let folderURL = try captureSavePreferences.withCaptureStorageDestinationAccess { folderURL in
+                try FileManager.default.createDirectory(
+                    at: folderURL,
+                    withIntermediateDirectories: true
+                )
+                return folderURL
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([folderURL])
+        } catch {
+            let localizedError = error as? LocalizedError
+            alertPresenter.showError(
+                title: localizedError?.errorDescription ?? "Save Folder Unavailable",
+                message: localizedError?.recoverySuggestion ?? error.localizedDescription
+            )
+        }
+    }
+
+    func authorizeDefaultCaptureFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Grant Screenshot Folder Access"
+        panel.message = "Choose Documents, or another parent folder. ClearShotX will create and use a ClearShotX folder inside it."
+        panel.prompt = "Grant Access"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = captureSavePreferences.defaultCaptureParentFolderURL
+
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self] response in
+            guard let self,
+                  response == .OK,
+                  let parentFolderURL = panel.url
+            else {
+                return
+            }
+
+            do {
+                try self.captureSavePreferences.authorizeDefaultCaptureParentFolder(parentFolderURL)
+                let captureFolderURL = try self.captureSavePreferences.withDefaultCaptureFolderAccess { folderURL in
+                    try FileManager.default.createDirectory(
+                        at: folderURL,
+                        withIntermediateDirectories: true
+                    )
+                    return folderURL
+                }
+                self.refreshCaptureSavePreferences()
+                NSWorkspace.shared.activateFileViewerSelecting([captureFolderURL])
+            } catch {
+                let localizedError = error as? LocalizedError
+                self.alertPresenter.showError(
+                    title: localizedError?.errorDescription ?? "Folder Access Failed",
+                    message: localizedError?.recoverySuggestion ?? error.localizedDescription
+                )
+            }
+        }
+    }
+
     func setTemporaryCaptureCleanupEnabled(_ isEnabled: Bool) {
         captureSavePreferences.isTemporaryCaptureCleanupEnabled = isEnabled
         isTemporaryCaptureCleanupEnabled = isEnabled
@@ -320,7 +389,8 @@ final class AppShellViewModel: ObservableObject {
 
     private func refreshCaptureSavePreferences() {
         captureSaveMode = captureSavePreferences.mode
-        captureSaveFolderPath = captureSavePreferences.fixedFolderDisplayPath
+        captureSaveFolderPath = captureSavePreferences.captureFolderDisplayPath
+        hasDefaultCaptureFolderAuthorization = captureSavePreferences.hasDefaultFolderAuthorization
     }
 
     private func configureGlobalHotkeysOnLaunch() async {

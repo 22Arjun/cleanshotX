@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Darwin
 import Foundation
 import UniformTypeIdentifiers
 
@@ -22,7 +23,7 @@ enum CaptureSaveMode: String, CaseIterable, Identifiable {
         case .askEveryTime:
             "Ask Every Time"
         case .fixedFolder:
-            "Fixed Folder"
+            "Custom Folder"
         }
     }
 }
@@ -34,6 +35,7 @@ enum CaptureSaveOutcome {
 
 enum CaptureExportError: LocalizedError {
     case sourceUnavailable
+    case defaultFolderUnavailable
     case fixedFolderUnavailable
     case bookmarkCreationFailed(Error)
     case bookmarkResolutionFailed(Error)
@@ -43,6 +45,8 @@ enum CaptureExportError: LocalizedError {
         switch self {
         case .sourceUnavailable:
             "The screenshot file is no longer available."
+        case .defaultFolderUnavailable:
+            "ClearShotX could not access its default screenshot folder."
         case .fixedFolderUnavailable:
             "The selected save folder is no longer available."
         case .bookmarkCreationFailed:
@@ -56,6 +60,8 @@ enum CaptureExportError: LocalizedError {
 
     var recoverySuggestion: String? {
         switch self {
+        case .defaultFolderUnavailable:
+            "Open ClearShotX Settings and grant access to the screenshot folder."
         case .fixedFolderUnavailable, .bookmarkCreationFailed, .bookmarkResolutionFailed:
             "Choose the save folder again in ClearshotX Settings."
         case .sourceUnavailable:
@@ -69,6 +75,8 @@ enum CaptureExportError: LocalizedError {
 final class CaptureSavePreferences {
     private enum Key {
         static let mode = "captureSaveMode"
+        static let defaultFolderBookmark = "captureDefaultFolderBookmark"
+        static let defaultFolderDisplayPath = "captureDefaultFolderDisplayPath"
         static let fixedFolderBookmark = "captureSaveFolderBookmark"
         static let fixedFolderDisplayPath = "captureSaveFolderDisplayPath"
         static let lastSaveDirectoryPath = "captureLastSaveDirectoryPath"
@@ -104,8 +112,32 @@ final class CaptureSavePreferences {
         userDefaults.data(forKey: Key.fixedFolderBookmark) != nil
     }
 
+    var hasDefaultFolderAuthorization: Bool {
+        userDefaults.data(forKey: Key.defaultFolderBookmark) != nil
+    }
+
     var fixedFolderDisplayPath: String? {
         userDefaults.string(forKey: Key.fixedFolderDisplayPath)
+    }
+
+    var defaultCaptureFolderURL: URL {
+        defaultCaptureParentFolderURL
+            .appendingPathComponent("ClearShotX", isDirectory: true)
+    }
+
+    var defaultCaptureParentFolderURL: URL {
+        Self.realUserHomeDirectoryURL
+            .appendingPathComponent("Documents", isDirectory: true)
+    }
+
+    var captureFolderDisplayPath: String {
+        switch mode {
+        case .askEveryTime:
+            userDefaults.string(forKey: Key.defaultFolderDisplayPath)
+                ?? "~/Documents/ClearShotX"
+        case .fixedFolder:
+            fixedFolderDisplayPath ?? "Choose a folder"
+        }
     }
 
     var lastSaveDirectoryURL: URL? {
@@ -119,7 +151,7 @@ final class CaptureSavePreferences {
     var isTemporaryCaptureCleanupEnabled: Bool {
         get {
             guard userDefaults.object(forKey: Key.temporaryCaptureCleanupEnabled) != nil else {
-                return true
+                return false
             }
 
             return userDefaults.bool(forKey: Key.temporaryCaptureCleanupEnabled)
@@ -138,7 +170,27 @@ final class CaptureSavePreferences {
             )
             userDefaults.set(bookmark, forKey: Key.fixedFolderBookmark)
             userDefaults.set(abbreviatedPath(for: folderURL), forKey: Key.fixedFolderDisplayPath)
+            rememberLastSaveDirectory(folderURL)
             mode = .fixedFolder
+        } catch {
+            throw CaptureExportError.bookmarkCreationFailed(error)
+        }
+    }
+
+    func authorizeDefaultCaptureParentFolder(_ folderURL: URL) throws {
+        do {
+            let bookmark = try folderURL.bookmarkData(
+                options: [.withSecurityScope],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            let captureFolderURL = folderURL
+                .appendingPathComponent("ClearShotX", isDirectory: true)
+            userDefaults.set(bookmark, forKey: Key.defaultFolderBookmark)
+            userDefaults.set(
+                abbreviatedPath(for: captureFolderURL),
+                forKey: Key.defaultFolderDisplayPath
+            )
         } catch {
             throw CaptureExportError.bookmarkCreationFailed(error)
         }
@@ -181,6 +233,65 @@ final class CaptureSavePreferences {
         return try operation(folderURL)
     }
 
+    func withDefaultCaptureFolderAccess<T>(_ operation: (URL) throws -> T) throws -> T {
+        guard let bookmark = userDefaults.data(forKey: Key.defaultFolderBookmark) else {
+            throw CaptureExportError.defaultFolderUnavailable
+        }
+
+        var isStale = false
+        let parentFolderURL: URL
+
+        do {
+            parentFolderURL = try URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+        } catch {
+            throw CaptureExportError.bookmarkResolutionFailed(error)
+        }
+
+        let didStartAccessing = parentFolderURL.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccessing {
+                parentFolderURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        if isStale {
+            try authorizeDefaultCaptureParentFolder(parentFolderURL)
+        }
+
+        let captureFolderURL = parentFolderURL
+            .appendingPathComponent("ClearShotX", isDirectory: true)
+        return try operation(captureFolderURL)
+    }
+
+    func withCaptureStorageDestinationAccess<T>(_ operation: (URL) throws -> T) throws -> T {
+        switch mode {
+        case .askEveryTime:
+            if hasDefaultFolderAuthorization {
+                return try withDefaultCaptureFolderAccess(operation)
+            }
+            return try operation(defaultCaptureFolderURL)
+        case .fixedFolder:
+            return try withFixedFolderAccess(operation)
+        }
+    }
+
+    private static let realUserHomeDirectoryURL: URL = {
+        guard let passwordEntry = getpwuid(getuid()) else {
+            return FileManager.default.homeDirectory(forUser: NSUserName())
+                ?? FileManager.default.homeDirectoryForCurrentUser
+        }
+
+        return URL(
+            fileURLWithPath: String(cString: passwordEntry.pointee.pw_dir),
+            isDirectory: true
+        )
+    }()
+
     private func abbreviatedPath(for folderURL: URL) -> String {
         let homePath = FileManager.default.homeDirectoryForCurrentUser.path
         guard folderURL.path.hasPrefix(homePath) else {
@@ -222,6 +333,11 @@ final class CaptureExportService: CaptureExportServicing {
         suggestedFileName: String,
         completion: @escaping (Result<CaptureSaveOutcome, CaptureExportError>) -> Void
     ) {
+        if isAlreadyStoredInFixedFolder(sourceURL) {
+            completion(.success(.saved(sourceURL)))
+            return
+        }
+
         guard let pngData = try? Data(contentsOf: sourceURL) else {
             completion(.failure(.sourceUnavailable))
             return
@@ -251,6 +367,10 @@ final class CaptureExportService: CaptureExportServicing {
         case .fixedFolder:
             do {
                 let destinationURL = try preferences.withFixedFolderAccess { folderURL in
+                    try fileManager.createDirectory(
+                        at: folderURL,
+                        withIntermediateDirectories: true
+                    )
                     let destinationURL = uniqueDestinationURL(
                         in: folderURL,
                         fileName: fileName
@@ -258,6 +378,7 @@ final class CaptureExportService: CaptureExportServicing {
                     try write(pngData, to: destinationURL)
                     return destinationURL
                 }
+                NSDocumentController.shared.noteNewRecentDocumentURL(destinationURL)
                 completion(.success(.saved(destinationURL)))
             } catch let error as CaptureExportError {
                 completion(.failure(error))
@@ -299,11 +420,22 @@ final class CaptureExportService: CaptureExportServicing {
                 self.preferences.rememberLastSaveDirectory(
                     destinationURL.deletingLastPathComponent()
                 )
+                NSDocumentController.shared.noteNewRecentDocumentURL(destinationURL)
                 completion(.success(.saved(destinationURL)))
             } catch {
                 completion(.failure(.writeFailed(error)))
             }
         }
+    }
+
+    private func isAlreadyStoredInFixedFolder(_ sourceURL: URL) -> Bool {
+        guard preferences.mode == .fixedFolder else {
+            return false
+        }
+
+        return (try? preferences.withFixedFolderAccess { folderURL in
+            sourceURL.deletingLastPathComponent().standardizedFileURL == folderURL.standardizedFileURL
+        }) == true
     }
 
     private func write(_ data: Data, to destinationURL: URL) throws {
