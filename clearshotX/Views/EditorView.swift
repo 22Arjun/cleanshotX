@@ -28,7 +28,7 @@ struct EditorView: View {
                 textFormattingCommand: viewModel.textFormattingCommand
             )
         }
-        .frame(minWidth: 680, minHeight: 460)
+        .frame(minWidth: 760, minHeight: 460)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }
@@ -102,6 +102,20 @@ private struct EditorToolbarView: View {
     private var annotationToolbarContent: some View {
         Group {
             toolButtonGroup(EditorToolbarAction.drawingTools)
+            ScrollView(.horizontal, showsIndicators: false) {
+                annotationContextControls
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("Annotation controls")
+            toolButtonGroup(EditorToolbarAction.historyCommands)
+            toolButtonGroup(EditorToolbarAction.outputCommands)
+        }
+    }
+
+    @ViewBuilder
+    private var annotationContextControls: some View {
+        HStack(spacing: 8) {
             if viewModel.shouldShowHighlightIntensitySlider {
                 highlightShapeMenu
                 highlightIntensitySlider
@@ -123,23 +137,26 @@ private struct EditorToolbarView: View {
                 }
                 opacitySlider
             }
-            Spacer(minLength: 12)
-            toolButtonGroup(EditorToolbarAction.historyCommands)
-            toolButtonGroup(EditorToolbarAction.outputCommands)
         }
     }
 
     private var cropToolbarContent: some View {
         Group {
             cropModeButtonGroup
-            cropRatioMenu
-            cropDimensionControls
-            cropCanvasColorMenu
-            toolbarDivider
-            cropTransformControls
-            toolbarDivider
-            cropImageSizeMenu
-            Spacer(minLength: 12)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    cropRatioMenu
+                    cropDimensionControls
+                    cropCanvasColorMenu
+                    toolbarDivider
+                    cropTransformControls
+                    toolbarDivider
+                    cropImageSizeMenu
+                }
+                .fixedSize(horizontal: true, vertical: false)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("Crop and resize controls")
         }
     }
 
@@ -2127,7 +2144,9 @@ private final class EditorCanvasNSView: NSView, NSTextViewDelegate {
             return
         }
 
-        let availableBounds = bounds.insetBy(dx: 28, dy: 28)
+        let horizontalInset: CGFloat = activeTool == .crop ? 52 : 28
+        let verticalInset: CGFloat = activeTool == .crop ? 58 : 28
+        let availableBounds = bounds.insetBy(dx: horizontalInset, dy: verticalInset)
         let imageSize = currentImage.editorCanvasSize
         imageDisplayScale = imageSize.aspectFitScale(in: availableBounds.size)
         let fittedSize = NSSize(
