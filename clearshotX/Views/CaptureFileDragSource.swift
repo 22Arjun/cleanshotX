@@ -48,6 +48,11 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
     private var didStartSecurityScopedAccess = false
     private var activePasteboardWriter: NSFilePromiseProvider?
     private var activeDragDirectoryURL: URL?
+    private var localMouseMonitor: Any?
+
+    deinit {
+        removeLocalMouseMonitor()
+    }
 
     override var isFlipped: Bool {
         true
@@ -57,6 +62,16 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
     // from being interpreted as background window drags by AppKit.
     override var mouseDownCanMoveWindow: Bool {
         false
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        if window == nil {
+            removeLocalMouseMonitor()
+        } else {
+            installLocalMouseMonitorIfNeeded()
+        }
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
@@ -69,12 +84,16 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        _ = beginDragIfNeeded(with: event)
+    }
+
+    private func beginDragIfNeeded(with event: NSEvent) -> Bool {
         guard !hasStartedDrag,
               let fileURL,
               let sourceImage,
               let mouseDownLocation
         else {
-            return
+            return false
         }
 
         let currentLocation = convert(event.locationInWindow, from: nil)
@@ -83,20 +102,20 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
             currentLocation.y - mouseDownLocation.y
         )
         guard distance >= dragThreshold else {
-            return
+            return false
         }
 
         didStartSecurityScopedAccess = fileURL.startAccessingSecurityScopedResource()
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             NSSound.beep()
             resetDragState()
-            return
+            return false
         }
 
         guard let pngData = pngData(for: fileURL, fallbackImage: sourceImage) else {
             NSSound.beep()
             resetDragState()
-            return
+            return false
         }
 
         guard let dragFileURL = makeDragFile(
@@ -105,7 +124,7 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
         ) else {
             NSSound.beep()
             resetDragState()
-            return
+            return false
         }
 
         let promiseDelegate = CaptureFilePromiseDelegate(
@@ -148,6 +167,65 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
             pngData: pngData,
             tiffData: sourceImage.tiffRepresentation
         )
+        return true
+    }
+
+    private func installLocalMouseMonitorIfNeeded() {
+        guard localMouseMonitor == nil else {
+            return
+        }
+
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
+        ) { [weak self] event in
+            self?.handleMonitoredMouseEvent(event) ?? event
+        }
+    }
+
+    private func removeLocalMouseMonitor() {
+        guard let localMouseMonitor else {
+            return
+        }
+
+        NSEvent.removeMonitor(localMouseMonitor)
+        self.localMouseMonitor = nil
+    }
+
+    private func handleMonitoredMouseEvent(_ event: NSEvent) -> NSEvent? {
+        guard let window, event.window === window else {
+            return event
+        }
+
+        switch event.type {
+        case .leftMouseDown:
+            let location = convert(event.locationInWindow, from: nil)
+            guard bounds.contains(location) else {
+                return event
+            }
+
+            mouseDownLocation = location
+            hasStartedDrag = false
+            return event
+
+        case .leftMouseDragged:
+            guard mouseDownLocation != nil else {
+                return event
+            }
+
+            // The controls sit above this view and normally own their mouse
+            // sequence. Consume only the event that crosses the threshold;
+            // AppKit's dragging session owns the remaining drag events.
+            return beginDragIfNeeded(with: event) ? nil : event
+
+        case .leftMouseUp:
+            if !hasStartedDrag {
+                resetDragState()
+            }
+            return event
+
+        default:
+            return event
+        }
     }
 
     func draggingSession(
