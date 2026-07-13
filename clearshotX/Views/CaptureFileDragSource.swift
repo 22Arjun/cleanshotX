@@ -11,8 +11,9 @@ import SwiftUI
 struct CaptureFileDragSource: NSViewRepresentable {
     let fileURL: URL
     let image: NSImage
+    let onClick: () -> Void
     let onDragBegan: () -> Void
-    let onDragEnded: (_ didDrop: Bool, _ shouldKeepSourceVisible: Bool) -> Void
+    let onDragEnded: (_ didDrop: Bool) -> Void
 
     func makeNSView(context: Context) -> CaptureFileDragSourceView {
         let view = CaptureFileDragSourceView()
@@ -27,6 +28,7 @@ struct CaptureFileDragSource: NSViewRepresentable {
     private func configure(_ view: CaptureFileDragSourceView) {
         view.fileURL = fileURL
         view.sourceImage = image
+        view.onClick = onClick
         view.onDragBegan = onDragBegan
         view.onDragEnded = onDragEnded
     }
@@ -35,27 +37,23 @@ struct CaptureFileDragSource: NSViewRepresentable {
 final class CaptureFileDragSourceView: NSView, NSDraggingSource {
     var fileURL: URL?
     var sourceImage: NSImage?
+    var onClick: (() -> Void)?
     var onDragBegan: (() -> Void)?
-    var onDragEnded: ((_ didDrop: Bool, _ shouldKeepSourceVisible: Bool) -> Void)?
+    var onDragEnded: ((_ didDrop: Bool) -> Void)?
 
-    private let dragThreshold: CGFloat = 3
+    private let dragThreshold: CGFloat = 4
     private var mouseDownLocation: CGPoint?
     private var hasStartedDrag = false
-    private var shouldKeepSourceVisible = false
     private var didStartSecurityScopedAccess = false
+    private var activePasteboardWriter: CaptureDragPasteboardWriter?
 
     override var isFlipped: Bool {
         true
     }
 
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .openHand)
-    }
-
     override func mouseDown(with event: NSEvent) {
         mouseDownLocation = convert(event.locationInWindow, from: nil)
         hasStartedDrag = false
-        shouldKeepSourceVisible = event.modifierFlags.contains(.option)
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -83,8 +81,14 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
             return
         }
 
-        let draggingItem = NSDraggingItem(pasteboardWriter: fileURL as NSURL)
+        let pasteboardWriter = CaptureDragPasteboardWriter(
+            fileURL: fileURL,
+            image: sourceImage
+        )
+        activePasteboardWriter = pasteboardWriter
+        let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardWriter)
         let previewSize = dragPreviewSize(for: sourceImage.size)
+        let previewImage = dragPreview(for: sourceImage, size: previewSize)
         draggingItem.setDraggingFrame(
             NSRect(
                 x: currentLocation.x - previewSize.width / 2,
@@ -92,11 +96,10 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
                 width: previewSize.width,
                 height: previewSize.height
             ),
-            contents: sourceImage
+            contents: previewImage
         )
 
         hasStartedDrag = true
-        shouldKeepSourceVisible = event.modifierFlags.contains(.option)
         onDragBegan?()
 
         let session = beginDraggingSession(
@@ -104,12 +107,14 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
             event: event,
             source: self
         )
+        session.draggingFormation = .none
         session.animatesToStartingPositionsOnCancelOrFail = true
     }
 
     override func mouseUp(with event: NSEvent) {
         if !hasStartedDrag {
             resetDragState()
+            onClick?()
         }
     }
 
@@ -124,19 +129,14 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
         true
     }
 
-    func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
-        shouldKeepSourceVisible = NSEvent.modifierFlags.contains(.option)
-    }
-
     func draggingSession(
         _ session: NSDraggingSession,
         endedAt screenPoint: NSPoint,
         operation: NSDragOperation
     ) {
         let didDrop = !operation.isEmpty
-        let keepSourceVisible = shouldKeepSourceVisible
         resetDragState()
-        onDragEnded?(didDrop, keepSourceVisible)
+        onDragEnded?(didDrop)
     }
 
     private func dragPreviewSize(for imageSize: NSSize) -> NSSize {
@@ -144,11 +144,30 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
             return NSSize(width: 120, height: 80)
         }
 
-        let scale = min(160 / imageSize.width, 100 / imageSize.height, 1)
+        let scale = min(180 / imageSize.width, 120 / imageSize.height, 1)
         return NSSize(
             width: max(1, imageSize.width * scale),
             height: max(1, imageSize.height * scale)
         )
+    }
+
+    private func dragPreview(for image: NSImage, size: NSSize) -> NSImage {
+        let preview = NSImage(size: size)
+        preview.lockFocus()
+
+        let bounds = NSRect(origin: .zero, size: size)
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).addClip()
+        image.draw(
+            in: bounds,
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: [.interpolation: NSImageInterpolation.high]
+        )
+
+        preview.unlockFocus()
+        return preview
     }
 
     private func resetDragState() {
@@ -159,6 +178,54 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
 
         mouseDownLocation = nil
         hasStartedDrag = false
-        shouldKeepSourceVisible = false
+        activePasteboardWriter = nil
+    }
+}
+
+private final class CaptureDragPasteboardWriter: NSObject, NSPasteboardWriting {
+    private let fileURL: URL
+    private let image: NSImage
+
+    init(fileURL: URL, image: NSImage) {
+        self.fileURL = fileURL
+        self.image = image
+    }
+
+    func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
+        [.fileURL, .png, .tiff]
+    }
+
+    func writingOptions(
+        forType type: NSPasteboard.PasteboardType,
+        pasteboard: NSPasteboard
+    ) -> NSPasteboard.WritingOptions {
+        type == .fileURL ? [] : .promised
+    }
+
+    func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
+        switch type {
+        case .fileURL:
+            fileURL.absoluteString
+        case .png:
+            pngData()
+        case .tiff:
+            image.tiffRepresentation
+        default:
+            nil
+        }
+    }
+
+    private func pngData() -> Data? {
+        if let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) {
+            return data
+        }
+
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData)
+        else {
+            return nil
+        }
+
+        return bitmap.representation(using: .png, properties: [:])
     }
 }

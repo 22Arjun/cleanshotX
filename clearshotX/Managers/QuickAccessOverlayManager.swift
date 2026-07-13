@@ -68,11 +68,8 @@ final class QuickAccessOverlayManager {
             onDragBegan: { [weak self] in
                 self?.beginDraggingCapture()
             },
-            onDragEnded: { [weak self] didDrop, shouldKeepOverlayVisible in
-                self?.finishDraggingCapture(
-                    didDrop: didDrop,
-                    shouldKeepOverlayVisible: shouldKeepOverlayVisible
-                )
+            onDragEnded: { [weak self] didDrop in
+                self?.finishDraggingCapture(didDrop: didDrop)
             },
             onEdit: { [weak self, editorWindowManager] in
                 self?.dismiss(animated: true)
@@ -235,13 +232,10 @@ final class QuickAccessOverlayManager {
         dismissWorkItem = nil
     }
 
-    private func finishDraggingCapture(
-        didDrop: Bool,
-        shouldKeepOverlayVisible: Bool
-    ) {
+    private func finishDraggingCapture(didDrop: Bool) {
         isDraggingCapture = false
 
-        if didDrop, !shouldKeepOverlayVisible {
+        if didDrop {
             dismiss(animated: true)
             return
         }
