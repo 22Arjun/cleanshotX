@@ -143,6 +143,21 @@ final class ScreenCaptureService {
             throw ScreenCaptureServiceError.invalidRegion
         }
 
+        // The selection overlay uses AppKit's global, bottom-left coordinate space.
+        // ScreenCaptureKit expects a display-local crop rectangle with a top-left
+        // origin, so both the display offset and vertical orientation must change.
+        let sourceRect = CGRect(
+            x: captureRect.minX - display.frame.minX,
+            y: display.frame.maxY - captureRect.maxY,
+            width: captureRect.width,
+            height: captureRect.height
+        )
+        .integral
+
+        guard sourceRect.width > 0, sourceRect.height > 0 else {
+            throw ScreenCaptureServiceError.invalidRegion
+        }
+
         let excludedApplications = content.applications.filter { application in
             application.bundleIdentifier == Bundle.main.bundleIdentifier
         }
@@ -156,9 +171,9 @@ final class ScreenCaptureService {
 
         let configuration = SCStreamConfiguration()
         let scale = CGFloat(filter.pointPixelScale)
-        configuration.sourceRect = captureRect
-        configuration.width = max(1, Int(captureRect.width * scale))
-        configuration.height = max(1, Int(captureRect.height * scale))
+        configuration.sourceRect = sourceRect
+        configuration.width = max(1, Int(sourceRect.width * scale))
+        configuration.height = max(1, Int(sourceRect.height * scale))
         configuration.showsCursor = false
         configuration.scalesToFit = false
 
