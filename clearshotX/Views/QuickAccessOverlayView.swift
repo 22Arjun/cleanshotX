@@ -40,7 +40,6 @@ struct QuickAccessOverlayView: View {
             CaptureFileDragSource(
                 fileURL: capture.fileURL,
                 image: capture.image,
-                onClick: onEdit,
                 onDragBegan: {
                     withAnimation(.easeOut(duration: 0.12)) {
                         isDragging = true
@@ -58,7 +57,7 @@ struct QuickAccessOverlayView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityLabel("Screenshot thumbnail")
-            .accessibilityHint("Click to edit, or drag to another app")
+            .accessibilityHint("Drag to another app")
 
             if isHovering && !isDragging {
                 controls

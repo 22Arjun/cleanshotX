@@ -12,7 +12,6 @@ import UniformTypeIdentifiers
 struct CaptureFileDragSource: NSViewRepresentable {
     let fileURL: URL
     let image: NSImage
-    let onClick: () -> Void
     let onDragBegan: () -> Void
     let onDragEnded: (_ didDrop: Bool) -> Void
 
@@ -29,7 +28,6 @@ struct CaptureFileDragSource: NSViewRepresentable {
     private func configure(_ view: CaptureFileDragSourceView) {
         view.fileURL = fileURL
         view.sourceImage = image
-        view.onClick = onClick
         view.onDragBegan = onDragBegan
         view.onDragEnded = onDragEnded
     }
@@ -38,7 +36,6 @@ struct CaptureFileDragSource: NSViewRepresentable {
 final class CaptureFileDragSourceView: NSView, NSDraggingSource {
     var fileURL: URL?
     var sourceImage: NSImage?
-    var onClick: (() -> Void)?
     var onDragBegan: (() -> Void)?
     var onDragEnded: ((_ didDrop: Bool) -> Void)?
 
@@ -238,7 +235,6 @@ final class CaptureFileDragSourceView: NSView, NSDraggingSource {
     override func mouseUp(with event: NSEvent) {
         if !hasStartedDrag {
             resetDragState()
-            onClick?()
         }
     }
 
