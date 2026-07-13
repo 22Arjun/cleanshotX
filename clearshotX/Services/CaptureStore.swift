@@ -131,7 +131,7 @@ final class CaptureStore: CaptureStoring {
     }
 
     func removeCapture(at url: URL, dragFileURL: URL? = nil) throws {
-        try removeFile(at: url)
+        try removeStoredCapture(at: url)
 
         guard let dragFileURL,
               dragFileURL.standardizedFileURL != url.standardizedFileURL
@@ -141,6 +141,23 @@ final class CaptureStore: CaptureStoring {
 
         try removeFile(at: dragFileURL)
         try? fileManager.removeItem(at: dragFileURL.deletingLastPathComponent())
+    }
+
+    private func removeStoredCapture(at url: URL) throws {
+        let removedFromCurrentCaptureFolder = (try? preferences.withCaptureStorageDestinationAccess { directoryURL in
+            guard url.deletingLastPathComponent().standardizedFileURL == directoryURL.standardizedFileURL else {
+                return false
+            }
+
+            try removeFile(at: url)
+            return true
+        }) ?? false
+
+        guard !removedFromCurrentCaptureFolder else {
+            return
+        }
+
+        try removeFile(at: url)
     }
 
     private func removeFile(at url: URL) throws {
