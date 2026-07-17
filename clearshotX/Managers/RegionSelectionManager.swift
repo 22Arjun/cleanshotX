@@ -14,8 +14,8 @@ import ScreenCaptureKit
     private var overlayWindows: [RegionSelectionWindow] = []
     private var continuation: CheckedContinuation<CGRect?, Never>?
     private var escapeMonitor: Any?
+    private var cursorMonitor: Any?
     private var isSelecting = false
-    private var didPushCursor = false
 
     func selectRegion(
         magnifierMode: RegionMagnifierMode,
@@ -119,6 +119,7 @@ import ScreenCaptureKit
         }
 
         installEscapeMonitor()
+        installCursorMonitor()
         NSApp.activate(ignoringOtherApps: true)
 
         overlayWindows.forEach { window in window.orderFrontRegardless() }
@@ -129,8 +130,17 @@ import ScreenCaptureKit
         activeWindow?.makeKeyAndOrderFront(nil)
         activeWindow?.makeFirstResponder(activeWindow?.contentView)
 
-        NSCursor.crosshair.push()
-        didPushCursor = true
+        overlayWindows.forEach { window in
+            if let contentView = window.contentView {
+                window.invalidateCursorRects(for: contentView)
+            }
+        }
+        enforceCrosshairCursor()
+
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.enforceCrosshairCursor()
+        }
     }
 
     private func installEscapeMonitor() {
@@ -150,11 +160,34 @@ import ScreenCaptureKit
         self.escapeMonitor = nil
     }
 
+    private func installCursorMonitor() {
+        removeCursorMonitor()
+        cursorMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp, .cursorUpdate]
+        ) { [weak self] event in
+            self?.enforceCrosshairCursor()
+            return event
+        }
+    }
+
+    private func removeCursorMonitor() {
+        guard let cursorMonitor else { return }
+
+        NSEvent.removeMonitor(cursorMonitor)
+        self.cursorMonitor = nil
+    }
+
+    private func enforceCrosshairCursor() {
+        guard isSelecting, continuation != nil else { return }
+        NSCursor.crosshair.set()
+    }
+
     private func finish(with rect: CGRect?) {
         guard let continuation else { return }
 
         self.continuation = nil
         removeEscapeMonitor()
+        removeCursorMonitor()
 
         overlayWindows.forEach { window in
             window.orderOut(nil)
@@ -162,10 +195,6 @@ import ScreenCaptureKit
         }
         overlayWindows.removeAll()
 
-        if didPushCursor {
-            NSCursor.pop()
-            didPushCursor = false
-        }
         NSCursor.arrow.set()
 
         let captureDelay = self.captureDelay
@@ -417,6 +446,8 @@ private final class RegionSelectionView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.makeFirstResponder(self)
+        window?.invalidateCursorRects(for: self)
+        enforceCrosshairCursor()
 
         guard let window else { return }
 
@@ -431,29 +462,53 @@ private final class RegionSelectionView: NSView {
         if let cursorTrackingArea { removeTrackingArea(cursorTrackingArea) }
 
         let trackingArea = NSTrackingArea(
-            rect: bounds, options: [.activeAlways, .inVisibleRect, .mouseMoved], owner: self)
+            rect: bounds,
+            options: [
+                .activeAlways,
+                .inVisibleRect,
+                .mouseMoved,
+                .mouseEnteredAndExited,
+                .cursorUpdate,
+            ],
+            owner: self
+        )
         addTrackingArea(trackingArea)
         cursorTrackingArea = trackingArea
     }
 
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .crosshair)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        enforceCrosshairCursor()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        enforceCrosshairCursor()
+    }
 
     override func mouseMoved(with event: NSEvent) {
+        enforceCrosshairCursor()
         viewModel.moveCursor(to: convert(event.locationInWindow, from: nil))
         needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {
+        enforceCrosshairCursor()
         viewModel.beginSelection(at: convert(event.locationInWindow, from: nil))
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
+        enforceCrosshairCursor()
         viewModel.updateSelection(to: convert(event.locationInWindow, from: nil))
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
+        enforceCrosshairCursor()
         viewModel.updateSelection(to: convert(event.locationInWindow, from: nil))
 
         guard let selectionRect = viewModel.selectionRect,
@@ -496,6 +551,10 @@ private final class RegionSelectionView: NSView {
         case .always: true
         case .off: false
         }
+    }
+
+    private func enforceCrosshairCursor() {
+        NSCursor.crosshair.set()
     }
 
     private func drawDimmedOverlay() {
