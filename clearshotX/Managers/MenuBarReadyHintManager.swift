@@ -226,18 +226,18 @@ private final class MenuBarHintPanel: NSPanel {
     }
 }
 
-private final class MenuBarHintHostingView<Content: View>: NSHostingView<Content> {
+private final class MenuBarHintHostingView: NSHostingView<MenuBarReadyHintView> {
     override var isOpaque: Bool {
         false
     }
 
-    required init(rootView: Content) {
+    required init(rootView: MenuBarReadyHintView) {
         super.init(rootView: rootView)
         setupTransparency()
     }
 
     @available(*, unavailable)
-    required init(rootView: Content, ignoresSafeArea: Bool) {
+    required init(rootView: MenuBarReadyHintView, ignoresSafeArea: Bool) {
         fatalError("init(rootView:ignoresSafeArea:) has not been implemented")
     }
 

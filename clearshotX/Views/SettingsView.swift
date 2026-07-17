@@ -17,6 +17,14 @@ struct SettingsView: View {
     @ObservedObject var viewModel: AppShellViewModel
 
     var body: some View {
+        ScrollView {
+            settingsContent
+        }
+        .frame(width: 520, height: settingsWindowHeight, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var settingsContent: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text("Settings")
                 .font(.system(size: 26, weight: .bold))
@@ -70,6 +78,34 @@ struct SettingsView: View {
                 }
                 .toggleStyle(.switch)
                 .controlSize(.regular)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Region Capture", systemImage: "viewfinder")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .labelColor))
+
+                Picker(
+                    "Pixel magnifier",
+                    selection: Binding(
+                        get: { viewModel.regionMagnifierMode },
+                        set: { viewModel.setRegionMagnifierMode($0) }
+                    )
+                ) {
+                    ForEach(RegionMagnifierMode.allCases) { mode in
+                        Text(mode.title)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 300)
+
+                Text(viewModel.regionMagnifierMode.detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             }
 
             Divider()
@@ -206,8 +242,7 @@ struct SettingsView: View {
             Spacer()
         }
         .padding(28)
-        .frame(width: 520, height: settingsWindowHeight, alignment: .topLeading)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private var saveFolderButtonTitle: String {

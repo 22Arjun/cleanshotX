@@ -128,8 +128,8 @@ final class QuickAccessOverlayManager {
         return panel
     }
 
-    private func makeRoundedHostingView<Content: View>(rootView: Content) -> NSView {
-        let hostingView = TransparentHostingView(rootView: rootView)
+    private func makeRoundedHostingView(rootView: QuickAccessOverlayView) -> NSView {
+        let hostingView = TransparentQuickAccessHostingView(rootView: rootView)
         hostingView.frame = NSRect(origin: .zero, size: panelSize)
         hostingView.autoresizingMask = [.width, .height]
         hostingView.layer?.masksToBounds = false
@@ -275,7 +275,7 @@ final class QuickAccessOverlayManager {
         panel.isReleasedWhenClosed = false
         panel.level = .floating
 
-        let hostingView = TransparentHostingView(
+        let hostingView = TransparentPinnedCaptureHostingView(
             rootView: PinnedCaptureView(image: thumbnail) { [weak self, weak panel] in
                 guard let panel else {
                     return
@@ -393,18 +393,58 @@ private final class QuickAccessPanel: NSPanel {
     }
 }
 
-private final class TransparentHostingView<Content: View>: NSHostingView<Content> {
+private final class TransparentQuickAccessHostingView: NSHostingView<QuickAccessOverlayView> {
     override var isOpaque: Bool {
         false
     }
 
-    required init(rootView: Content) {
+    required init(rootView: QuickAccessOverlayView) {
         super.init(rootView: rootView)
         setupTransparency()
     }
 
     @available(*, unavailable)
-    required init(rootView: Content, ignoresSafeArea: Bool) {
+    required init(rootView: QuickAccessOverlayView, ignoresSafeArea: Bool) {
+        fatalError("init(rootView:ignoresSafeArea:) has not been implemented")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        setupTransparency()
+        window?.backgroundColor = .clear
+        window?.isOpaque = false
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.clear.setFill()
+        dirtyRect.fill()
+        super.draw(dirtyRect)
+    }
+
+    private func setupTransparency() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.isOpaque = false
+    }
+}
+
+private final class TransparentPinnedCaptureHostingView: NSHostingView<PinnedCaptureView> {
+    override var isOpaque: Bool {
+        false
+    }
+
+    required init(rootView: PinnedCaptureView) {
+        super.init(rootView: rootView)
+        setupTransparency()
+    }
+
+    @available(*, unavailable)
+    required init(rootView: PinnedCaptureView, ignoresSafeArea: Bool) {
         fatalError("init(rootView:ignoresSafeArea:) has not been implemented")
     }
 

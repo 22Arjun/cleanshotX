@@ -17,6 +17,7 @@ final class AppShellViewModel: ObservableObject {
     @Published private(set) var isCapturing = false
     @Published private(set) var activeHotkeyMode: GlobalHotkeyMode = .preferred
     @Published private(set) var isCaptureSoundEnabled: Bool
+    @Published private(set) var regionMagnifierMode: RegionMagnifierMode
     @Published private(set) var captureSaveMode: CaptureSaveMode
     @Published private(set) var captureSaveFolderPath: String?
     @Published private(set) var hasDefaultCaptureFolderAuthorization: Bool
@@ -25,6 +26,7 @@ final class AppShellViewModel: ObservableObject {
     private let screenCaptureService: ScreenCaptureService
     private let captureStore: CaptureStoring
     private let captureSavePreferences: CaptureSavePreferences
+    private let regionCapturePreferences: RegionCapturePreferences
     private let captureSoundService: CaptureSoundService
     private let clipboardService: ClipboardService
     private let editorWindowManager: EditorWindowManager
@@ -45,6 +47,7 @@ final class AppShellViewModel: ObservableObject {
         screenCaptureService: ScreenCaptureService? = nil,
         captureStore: CaptureStoring? = nil,
         captureSavePreferences: CaptureSavePreferences? = nil,
+        regionCapturePreferences: RegionCapturePreferences? = nil,
         captureExportService: CaptureExportServicing? = nil,
         captureSoundService: CaptureSoundService? = nil,
         clipboardService: ClipboardService? = nil,
@@ -60,6 +63,7 @@ final class AppShellViewModel: ObservableObject {
         alertPresenter: AlertPresenter? = nil
     ) {
         let resolvedSavePreferences = captureSavePreferences ?? CaptureSavePreferences()
+        let resolvedRegionCapturePreferences = regionCapturePreferences ?? RegionCapturePreferences()
         let resolvedCaptureStore = captureStore ?? CaptureStore(
             preferences: resolvedSavePreferences,
             isCleanupEnabled: { resolvedSavePreferences.isTemporaryCaptureCleanupEnabled }
@@ -73,6 +77,7 @@ final class AppShellViewModel: ObservableObject {
         )
         self.captureStore = resolvedCaptureStore
         self.captureSavePreferences = resolvedSavePreferences
+        self.regionCapturePreferences = resolvedRegionCapturePreferences
         self.captureSoundService = captureSoundService ?? CaptureSoundService()
         self.clipboardService = clipboardService ?? ClipboardService()
         self.editorWindowManager = editorWindowManager ?? EditorWindowManager(
@@ -93,6 +98,7 @@ final class AppShellViewModel: ObservableObject {
         self.menuBarReadyHintManager = menuBarReadyHintManager ?? MenuBarReadyHintManager()
         self.alertPresenter = alertPresenter ?? AlertPresenter()
         self.isCaptureSoundEnabled = self.captureSoundService.isEnabled
+        self.regionMagnifierMode = resolvedRegionCapturePreferences.magnifierMode
         self.captureSaveMode = resolvedSavePreferences.mode
         self.captureSaveFolderPath = resolvedSavePreferences.captureFolderDisplayPath
         self.hasDefaultCaptureFolderAuthorization = resolvedSavePreferences.hasDefaultFolderAuthorization
@@ -139,6 +145,15 @@ final class AppShellViewModel: ObservableObject {
             return
         }
 
+        if !screenCaptureService.hasScreenRecordingPermission() {
+            _ = screenCaptureService.requestScreenRecordingPermission()
+
+            guard screenCaptureService.hasScreenRecordingPermission() else {
+                handleCaptureError(ScreenCaptureServiceError.permissionDenied)
+                return
+            }
+        }
+
         isCapturing = true
 
         Task {
@@ -146,7 +161,9 @@ final class AppShellViewModel: ObservableObject {
                 isCapturing = false
             }
 
-            guard let region = await regionSelectionManager.selectRegion() else {
+            guard let region = await regionSelectionManager.selectRegion(
+                magnifierMode: regionMagnifierMode
+            ) else {
                 return
             }
 
@@ -205,6 +222,11 @@ final class AppShellViewModel: ObservableObject {
     func setCaptureSoundEnabled(_ isEnabled: Bool) {
         captureSoundService.isEnabled = isEnabled
         isCaptureSoundEnabled = isEnabled
+    }
+
+    func setRegionMagnifierMode(_ mode: RegionMagnifierMode) {
+        regionCapturePreferences.magnifierMode = mode
+        regionMagnifierMode = mode
     }
 
     func setCaptureSaveMode(_ mode: CaptureSaveMode) {

@@ -146,17 +146,12 @@ final class ScreenCaptureService {
         // The selection overlay uses AppKit's global, bottom-left coordinate space.
         // ScreenCaptureKit expects a display-local crop rectangle with a top-left
         // origin, so both the display offset and vertical orientation must change.
-        let sourceRect = CGRect(
+        let proposedSourceRect = CGRect(
             x: captureRect.minX - display.frame.minX,
             y: display.frame.maxY - captureRect.maxY,
             width: captureRect.width,
             height: captureRect.height
         )
-        .integral
-
-        guard sourceRect.width > 0, sourceRect.height > 0 else {
-            throw ScreenCaptureServiceError.invalidRegion
-        }
 
         let excludedApplications = content.applications.filter { application in
             application.bundleIdentifier == Bundle.main.bundleIdentifier
@@ -171,9 +166,14 @@ final class ScreenCaptureService {
 
         let configuration = SCStreamConfiguration()
         let scale = CGFloat(filter.pointPixelScale)
+        let sourceRect = proposedSourceRect.pixelAligned(scale: scale)
+        guard sourceRect.width > 0, sourceRect.height > 0 else {
+            throw ScreenCaptureServiceError.invalidRegion
+        }
+
         configuration.sourceRect = sourceRect
-        configuration.width = max(1, Int(sourceRect.width * scale))
-        configuration.height = max(1, Int(sourceRect.height * scale))
+        configuration.width = max(1, Int((sourceRect.width * scale).rounded()))
+        configuration.height = max(1, Int((sourceRect.height * scale).rounded()))
         configuration.showsCursor = false
         configuration.scalesToFit = false
 
@@ -327,5 +327,20 @@ private extension CGRect {
         }
 
         return max(0, width) * max(0, height)
+    }
+
+    func pixelAligned(scale: CGFloat) -> CGRect {
+        let scale = max(1, scale)
+        let minimumX = floor(minX * scale) / scale
+        let minimumY = floor(minY * scale) / scale
+        let maximumX = ceil(maxX * scale) / scale
+        let maximumY = ceil(maxY * scale) / scale
+
+        return CGRect(
+            x: minimumX,
+            y: minimumY,
+            width: max(0, maximumX - minimumX),
+            height: max(0, maximumY - minimumY)
+        )
     }
 }
