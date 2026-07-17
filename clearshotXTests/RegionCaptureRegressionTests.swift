@@ -187,6 +187,94 @@ final class RegionSelectionGeometryTests: XCTestCase {
 }
 
 @MainActor
+final class RegionRenderOptimizationTests: XCTestCase {
+    func testDirtyRegionsOnlyContainChangedSelectionStrips() {
+        let oldRect = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let newRect = CGRect(x: 10, y: 0, width: 100, height: 100)
+
+        let changedAreas = RegionDirtyRegionCalculator.changedAreas(
+            from: oldRect,
+            to: newRect
+        )
+
+        XCTAssertEqual(changedAreas.count, 2)
+        XCTAssertTrue(changedAreas.contains(CGRect(x: 0, y: 0, width: 10, height: 100)))
+        XCTAssertTrue(changedAreas.contains(CGRect(x: 100, y: 0, width: 10, height: 100)))
+        XCTAssertEqual(
+            changedAreas.reduce(0) { $0 + $1.width * $1.height },
+            2_000,
+            accuracy: 0.001
+        )
+    }
+
+    func testDirtyRegionsHandleSelectionAppearingAndDisappearing() {
+        let rect = CGRect(x: 20, y: 30, width: 40, height: 50)
+
+        XCTAssertEqual(
+            RegionDirtyRegionCalculator.changedAreas(from: nil, to: rect),
+            [rect]
+        )
+        XCTAssertEqual(
+            RegionDirtyRegionCalculator.changedAreas(from: rect, to: nil),
+            [rect]
+        )
+        XCTAssertTrue(
+            RegionDirtyRegionCalculator.changedAreas(from: rect, to: rect).isEmpty
+        )
+    }
+
+    func testReusablePixelSamplerUsesTopOriginCoordinates() throws {
+        let image = try ScreenCaptureService.compositeRegionImage(
+            from: [
+                DisplayRegionCapture(
+                    image: solidImage(red: 255, green: 0, blue: 0),
+                    globalRect: CGRect(x: 0, y: 0, width: 1, height: 1),
+                    scale: 1
+                ),
+                DisplayRegionCapture(
+                    image: solidImage(red: 0, green: 0, blue: 255),
+                    globalRect: CGRect(x: 0, y: 1, width: 1, height: 1),
+                    scale: 1
+                ),
+            ],
+            selectedRegion: CGRect(x: 0, y: 0, width: 1, height: 2)
+        )
+        let sampler = try XCTUnwrap(RegionPixelSampler(image: image))
+
+        XCTAssertEqual(sampler.color(x: 0, y: 0), RegionPixelColor(red: 0, green: 0, blue: 255))
+        XCTAssertEqual(sampler.color(x: 0, y: 1), RegionPixelColor(red: 255, green: 0, blue: 0))
+        XCTAssertNil(sampler.color(x: -1, y: 0))
+        XCTAssertNil(sampler.color(x: 0, y: 2))
+    }
+
+    private func solidImage(red: Int, green: Int, blue: Int) -> CGImage {
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+        let context = CGContext(
+            data: nil,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(
+            CGColor(
+                colorSpace: colorSpace,
+                components: [
+                    CGFloat(red) / 255,
+                    CGFloat(green) / 255,
+                    CGFloat(blue) / 255,
+                    1,
+                ]
+            )!
+        )
+        context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        return context.makeImage()!
+    }
+}
+
+@MainActor
 final class RegionCaptureCompositorTests: XCTestCase {
     func testVerticallyArrangedDisplayPiecesKeepCorrectOrientation() throws {
         let result = try ScreenCaptureService.compositeRegionImage(

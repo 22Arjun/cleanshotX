@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import QuartzCore
 import ScreenCaptureKit
 
 @MainActor final class RegionSelectionManager {
@@ -125,7 +126,7 @@ import ScreenCaptureKit
             overlayView.onCancel = { [weak self] in self?.finish(with: nil) }
             overlayView.onChange = { [weak self] in
                 self?.overlayWindows.forEach { window in
-                    window.contentView?.needsDisplay = true
+                    (window.contentView as? RegionSelectionView)?.scheduleRenderUpdate()
                 }
             }
 
@@ -732,7 +733,7 @@ private struct RegionLoupePlacement {
     }
 }
 
-private struct RegionPixelColor {
+struct RegionPixelColor: Equatable {
     let red: Int
     let green: Int
     let blue: Int
@@ -755,6 +756,169 @@ private struct RegionPixelColor {
     }
 }
 
+final class RegionPixelSampler {
+    private let image: CGImage
+    private let storage: UnsafeMutablePointer<UInt8>
+    private let context: CGContext
+
+    init?(image: CGImage) {
+        let storage = UnsafeMutablePointer<UInt8>.allocate(capacity: 4)
+        storage.initialize(repeating: 0, count: 4)
+
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: storage,
+                  width: 1,
+                  height: 1,
+                  bitsPerComponent: 8,
+                  bytesPerRow: 4,
+                  space: colorSpace,
+                  bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue
+                      | CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else {
+            storage.deinitialize(count: 4)
+            storage.deallocate()
+            return nil
+        }
+
+        self.image = image
+        self.storage = storage
+        self.context = context
+        context.interpolationQuality = .none
+    }
+
+    deinit {
+        storage.deinitialize(count: 4)
+        storage.deallocate()
+    }
+
+    func color(x: Int, y: Int) -> RegionPixelColor? {
+        guard x >= 0, x < image.width, y >= 0, y < image.height else {
+            return nil
+        }
+
+        for index in 0..<4 { storage[index] = 0 }
+        context.saveGState()
+        context.setBlendMode(.copy)
+        context.clear(CGRect(x: 0, y: 0, width: 1, height: 1))
+        context.draw(
+            image,
+            in: CGRect(
+                x: -CGFloat(x),
+                y: CGFloat(y + 1 - image.height),
+                width: CGFloat(image.width),
+                height: CGFloat(image.height)
+            )
+        )
+        context.restoreGState()
+
+        let alpha = Int(storage[3])
+        func unpremultiplied(_ component: UInt8) -> Int {
+            guard alpha > 0, alpha < 255 else {
+                return Int(component)
+            }
+            return min(255, Int(component) * 255 / alpha)
+        }
+
+        return RegionPixelColor(
+            red: unpremultiplied(storage[0]),
+            green: unpremultiplied(storage[1]),
+            blue: unpremultiplied(storage[2])
+        )
+    }
+}
+
+enum RegionDirtyRegionCalculator {
+    static func changedAreas(from oldRect: CGRect?, to newRect: CGRect?) -> [CGRect] {
+        guard oldRect != newRect else { return [] }
+
+        switch (oldRect, newRect) {
+        case let (oldRect?, newRect?):
+            return subtract(newRect, from: oldRect) + subtract(oldRect, from: newRect)
+        case let (oldRect?, nil):
+            return [oldRect]
+        case let (nil, newRect?):
+            return [newRect]
+        case (nil, nil):
+            return []
+        }
+    }
+
+    private static func subtract(_ otherRect: CGRect, from rect: CGRect) -> [CGRect] {
+        let intersection = rect.intersection(otherRect)
+        guard !intersection.isNull,
+              intersection.width > 0,
+              intersection.height > 0
+        else {
+            return [rect]
+        }
+
+        var pieces: [CGRect] = []
+        if intersection.minY > rect.minY {
+            pieces.append(
+                CGRect(
+                    x: rect.minX,
+                    y: rect.minY,
+                    width: rect.width,
+                    height: intersection.minY - rect.minY
+                )
+            )
+        }
+        if intersection.maxY < rect.maxY {
+            pieces.append(
+                CGRect(
+                    x: rect.minX,
+                    y: intersection.maxY,
+                    width: rect.width,
+                    height: rect.maxY - intersection.maxY
+                )
+            )
+        }
+        if intersection.minX > rect.minX {
+            pieces.append(
+                CGRect(
+                    x: rect.minX,
+                    y: intersection.minY,
+                    width: intersection.minX - rect.minX,
+                    height: intersection.height
+                )
+            )
+        }
+        if intersection.maxX < rect.maxX {
+            pieces.append(
+                CGRect(
+                    x: intersection.maxX,
+                    y: intersection.minY,
+                    width: rect.maxX - intersection.maxX,
+                    height: intersection.height
+                )
+            )
+        }
+        return pieces
+    }
+}
+
+private struct RegionRenderDimensions: Equatable {
+    let width: Int
+    let height: Int
+}
+
+private struct RegionRenderSnapshot: Equatable {
+    let selectionRect: CGRect?
+    let dimensions: RegionRenderDimensions?
+    let startPoint: CGPoint?
+    let cursorPoint: CGPoint?
+    let hasStartedSelection: Bool
+}
+
+private struct RegionViewVisualState {
+    let selectionPunchRect: CGRect?
+    let selectionBorderRect: CGRect?
+    let sizeLabelRect: CGRect?
+    let loupeRect: CGRect?
+}
+
 private final class RegionSelectionView: NSView {
     var onComplete: ((CGRect) -> Void)?
     var onCancel: (() -> Void)?
@@ -768,7 +932,12 @@ private final class RegionSelectionView: NSView {
     private let magnifierSize: RegionMagnifierSize
     private let magnifierShowsPixelColor: Bool
     private let viewModel: RegionSelectionViewModel
+    private let pixelSampler: RegionPixelSampler?
     private var cursorTrackingArea: NSTrackingArea?
+    private var refreshDisplayLink: CADisplayLink?
+    private var presentedRenderSnapshot: RegionRenderSnapshot?
+    private var pendingRenderSnapshot: RegionRenderSnapshot?
+    private var pendingDirtyRects: [CGRect] = []
     private var isSpacePressed = false
     private var resizeModifiers: RegionResizeModifiers = []
     private var keyboardPointerOffset = CGVector.zero
@@ -792,6 +961,9 @@ private final class RegionSelectionView: NSView {
         self.magnifierSize = magnifierSize
         self.magnifierShowsPixelColor = magnifierShowsPixelColor
         self.viewModel = viewModel
+        self.pixelSampler = magnifierShowsPixelColor
+            ? snapshot.flatMap { RegionPixelSampler(image: $0) }
+            : nil
         super.init(frame: frameRect)
     }
 
@@ -803,15 +975,25 @@ private final class RegionSelectionView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        configureDisplayLink()
         window?.makeFirstResponder(self)
         window?.invalidateCursorRects(for: self)
         enforceCrosshairCursor()
 
         let mouseLocation = NSEvent.mouseLocation
-        guard screenFrame.contains(mouseLocation) else { return }
+        if screenFrame.contains(mouseLocation) {
+            viewModel.moveCursor(to: mouseLocation)
+            invalidateOverlays()
+        } else {
+            scheduleRenderUpdate(forceFull: true)
+        }
+    }
 
-        viewModel.moveCursor(to: mouseLocation)
-        invalidateOverlays()
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil {
+            tearDownDisplayLink()
+        }
+        super.viewWillMove(toWindow: newWindow)
     }
 
     override func updateTrackingAreas() {
@@ -954,28 +1136,39 @@ private final class RegionSelectionView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        drawDimmedOverlay()
+        let renderSnapshot = presentedRenderSnapshot ?? makeRenderSnapshot()
+        clearForRedraw(dirtyRect)
+        drawDimmedOverlay(for: renderSnapshot)
 
-        if let selectionRect = viewModel.selectionRect {
+        if let selectionRect = renderSnapshot.selectionRect {
             let localSelectionRect = localRect(for: selectionRect)
             drawSelectionBorder(for: localSelectionRect)
             let visibleSelection = selectionRect.intersection(screenFrame)
-            if cursorIsOnThisDisplay, !visibleSelection.isNull {
-                drawSizeLabel(for: localRect(for: visibleSelection))
+            if cursorIsOnThisDisplay(renderSnapshot),
+               !visibleSelection.isNull,
+               let dimensions = renderSnapshot.dimensions
+            {
+                drawSizeLabel(
+                    for: localRect(for: visibleSelection),
+                    dimensions: dimensions
+                )
             }
         }
 
-        if shouldShowMagnifier,
-           cursorIsOnThisDisplay,
-           let cursorPoint = viewModel.cursorPoint
+        if shouldShowMagnifier(renderSnapshot),
+           cursorIsOnThisDisplay(renderSnapshot),
+           let cursorPoint = renderSnapshot.cursorPoint
         {
-            drawLoupe(near: localPoint(for: cursorPoint))
+            drawLoupe(
+                near: localPoint(for: cursorPoint),
+                renderSnapshot: renderSnapshot
+            )
         }
     }
 
-    private var shouldShowMagnifier: Bool {
+    private func shouldShowMagnifier(_ renderSnapshot: RegionRenderSnapshot) -> Bool {
         switch magnifierMode {
-        case .automatic: !viewModel.hasStartedSelection
+        case .automatic: !renderSnapshot.hasStartedSelection
         case .always: true
         case .off: false
         }
@@ -1032,9 +1225,19 @@ private final class RegionSelectionView: NSView {
         ).clamped(to: viewModel.bounds)
     }
 
-    private func drawDimmedOverlay() {
+    private func clearForRedraw(_ dirtyRect: CGRect) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+
+        context.saveGState()
+        context.setBlendMode(.copy)
+        context.setFillColor(NSColor.clear.cgColor)
+        context.fill(dirtyRect)
+        context.restoreGState()
+    }
+
+    private func drawDimmedOverlay(for renderSnapshot: RegionRenderSnapshot) {
         let dimPath = NSBezierPath(rect: bounds)
-        if let selectionRect = viewModel.selectionRect {
+        if let selectionRect = renderSnapshot.selectionRect {
             let visibleSelection = selectionRect.intersection(screenFrame)
             if !visibleSelection.isNull {
                 dimPath.append(NSBezierPath(rect: localRect(for: visibleSelection)))
@@ -1053,28 +1256,19 @@ private final class RegionSelectionView: NSView {
         borderPath.stroke()
     }
 
-    private func drawSizeLabel(for rect: CGRect) {
-        guard let dimensions = viewModel.pixelDimensions else { return }
-
+    private func drawSizeLabel(
+        for rect: CGRect,
+        dimensions: RegionRenderDimensions
+    ) {
         let text = "\(dimensions.width) × \(dimensions.height)"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: NSColor.white,
         ]
         let attributedText = NSAttributedString(string: text, attributes: attributes)
-        let textSize = attributedText.size()
         let horizontalPadding: CGFloat = 8
         let verticalPadding: CGFloat = 5
-        let labelSize = CGSize(
-            width: textSize.width + horizontalPadding * 2,
-            height: textSize.height + verticalPadding * 2)
-
-        var labelOrigin = CGPoint(
-            x: rect.midX - labelSize.width / 2, y: rect.minY - labelSize.height - 8)
-        if labelOrigin.y < bounds.minY + 8 { labelOrigin.y = rect.maxY + 8 }
-        labelOrigin.x = min(max(bounds.minX + 8, labelOrigin.x), bounds.maxX - labelSize.width - 8)
-
-        let labelRect = CGRect(origin: labelOrigin, size: labelSize)
+        let labelRect = sizeLabelRect(for: rect, dimensions: dimensions)
         let backgroundPath = NSBezierPath(roundedRect: labelRect, xRadius: 5, yRadius: 5)
         NSColor.black.withAlphaComponent(0.78).setFill()
         backgroundPath.fill()
@@ -1082,10 +1276,50 @@ private final class RegionSelectionView: NSView {
         attributedText.draw(in: labelRect.insetBy(dx: horizontalPadding, dy: verticalPadding))
     }
 
-    private func drawLoupe(near cursorPoint: CGPoint) {
+    private func sizeLabelRect(
+        for rect: CGRect,
+        dimensions: RegionRenderDimensions
+    ) -> CGRect {
+        let text = "\(dimensions.width) × \(dimensions.height)"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+        ]
+        let textSize = NSAttributedString(string: text, attributes: attributes).size()
+        let horizontalPadding: CGFloat = 8
+        let verticalPadding: CGFloat = 5
+        let edgeInset: CGFloat = 8
+        let labelSize = CGSize(
+            width: ceil(textSize.width) + horizontalPadding * 2,
+            height: ceil(textSize.height) + verticalPadding * 2
+        )
+        let maximumX = max(bounds.minX + edgeInset, bounds.maxX - labelSize.width - edgeInset)
+        var origin = CGPoint(
+            x: min(
+                max(bounds.minX + edgeInset, rect.midX - labelSize.width / 2),
+                maximumX
+            ),
+            y: rect.minY - labelSize.height - edgeInset
+        )
+        if origin.y < bounds.minY + edgeInset {
+            origin.y = rect.maxY + edgeInset
+        }
+        origin.y = min(
+            max(bounds.minY + edgeInset, origin.y),
+            max(bounds.minY + edgeInset, bounds.maxY - labelSize.height - edgeInset)
+        )
+        return CGRect(origin: origin, size: labelSize)
+    }
+
+    private func drawLoupe(
+        near cursorPoint: CGPoint,
+        renderSnapshot: RegionRenderSnapshot
+    ) {
         guard let snapshot, bounds.width > 0, bounds.height > 0 else { return }
 
-        let loupeRect = loupeRect(near: cursorPoint)
+        let loupeRect = loupeRect(
+            near: cursorPoint,
+            renderSnapshot: renderSnapshot
+        )
         let contentInset: CGFloat = 6
         let imageRect = loupeRect.insetBy(dx: contentInset, dy: contentInset)
         let sampleWidth = samplePixelCount(
@@ -1150,19 +1384,11 @@ private final class RegionSelectionView: NSView {
             xRadius: innerCornerRadius,
             yRadius: innerCornerRadius
         ).addClip()
-        NSGraphicsContext.current?.imageInterpolation = .none
-        let image = NSImage(
-            cgImage: croppedImage,
-            size: NSSize(width: CGFloat(sampleWidth), height: CGFloat(sampleHeight))
-        )
-        image.draw(
-            in: imageRect,
-            from: .zero,
-            operation: .copy,
-            fraction: 1,
-            respectFlipped: true,
-            hints: [.interpolation: NSImageInterpolation.none]
-        )
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.interpolationQuality = .none
+            context.setShouldAntialias(false)
+            context.draw(croppedImage, in: imageRect)
+        }
         NSGraphicsContext.restoreGraphicsState()
 
         let pixelSize = CGSize(
@@ -1179,11 +1405,8 @@ private final class RegionSelectionView: NSView {
         drawLoupeCrosshair(in: imageRect, targetPixelRect: targetPixelRect)
 
         if magnifierShowsPixelColor,
-           let pixelColor = pixelColor(
-               in: snapshot,
-               x: targetPixelX,
-               y: targetPixelY
-           ) {
+           let pixelColor = pixelSampler?.color(x: targetPixelX, y: targetPixelY)
+        {
             drawPixelColorReadout(
                 pixelColor,
                 in: imageRect,
@@ -1202,14 +1425,17 @@ private final class RegionSelectionView: NSView {
         outline.stroke()
     }
 
-    private func loupeRect(near cursorPoint: CGPoint) -> CGRect {
+    private func loupeRect(
+        near cursorPoint: CGPoint,
+        renderSnapshot: RegionRenderSnapshot
+    ) -> CGRect {
         let offset: CGFloat = 22
         let edgeInset: CGFloat = 8
 
         return RegionLoupePlacement.rect(
             near: cursorPoint,
-            dragOrigin: viewModel.startPoint.map { localPoint(for: $0) },
-            selectionRect: viewModel.selectionRect.map { localRect(for: $0) },
+            dragOrigin: renderSnapshot.startPoint.map { localPoint(for: $0) },
+            selectionRect: renderSnapshot.selectionRect.map { localRect(for: $0) },
             within: bounds,
             size: magnifierSize.dimensions,
             offset: offset,
@@ -1245,54 +1471,6 @@ private final class RegionSelectionView: NSView {
         centerPath.lineWidth = 1
         NSColor.white.setStroke()
         centerPath.stroke()
-    }
-
-    private func pixelColor(in image: CGImage, x: Int, y: Int) -> RegionPixelColor? {
-        let pixelRect = CGRect(x: CGFloat(x), y: CGFloat(y), width: 1, height: 1)
-        guard let pixelImage = image.cropping(to: pixelRect) else {
-            return nil
-        }
-
-        var bytes = [UInt8](repeating: 0, count: 4)
-        let rendered = bytes.withUnsafeMutableBytes { buffer -> Bool in
-            guard let address = buffer.baseAddress,
-                  let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-                  let context = CGContext(
-                      data: address,
-                      width: 1,
-                      height: 1,
-                      bitsPerComponent: 8,
-                      bytesPerRow: 4,
-                      space: colorSpace,
-                      bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue
-                          | CGImageAlphaInfo.premultipliedLast.rawValue
-                  )
-            else {
-                return false
-            }
-
-            context.interpolationQuality = .none
-            context.draw(pixelImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-            return true
-        }
-
-        guard rendered else {
-            return nil
-        }
-
-        let alpha = Int(bytes[3])
-        func unpremultiplied(_ component: UInt8) -> Int {
-            guard alpha > 0, alpha < 255 else {
-                return Int(component)
-            }
-            return min(255, Int(component) * 255 / alpha)
-        }
-
-        return RegionPixelColor(
-            red: unpremultiplied(bytes[0]),
-            green: unpremultiplied(bytes[1]),
-            blue: unpremultiplied(bytes[2])
-        )
     }
 
     private func drawPixelColorReadout(
@@ -1390,8 +1568,217 @@ private final class RegionSelectionView: NSView {
         onCancel?()
     }
 
-    private var cursorIsOnThisDisplay: Bool {
-        guard let cursorPoint = viewModel.cursorPoint else { return false }
+    private func configureDisplayLink() {
+        guard refreshDisplayLink == nil, window != nil else { return }
+
+        let displayLink = displayLink(
+            target: self,
+            selector: #selector(displayLinkDidFire(_:))
+        )
+        displayLink.isPaused = true
+        displayLink.add(to: .main, forMode: .common)
+        refreshDisplayLink = displayLink
+        scheduleRenderUpdate(forceFull: true)
+    }
+
+    private func tearDownDisplayLink() {
+        refreshDisplayLink?.invalidate()
+        refreshDisplayLink = nil
+        pendingRenderSnapshot = nil
+        pendingDirtyRects.removeAll(keepingCapacity: true)
+    }
+
+    @objc private func displayLinkDidFire(_ displayLink: CADisplayLink) {
+        commitPendingRender()
+    }
+
+    fileprivate func scheduleRenderUpdate(forceFull: Bool = false) {
+        let nextSnapshot = makeRenderSnapshot()
+        let regionsToRedraw: [CGRect]
+        if forceFull || presentedRenderSnapshot == nil {
+            regionsToRedraw = [bounds]
+        } else if let presentedRenderSnapshot {
+            regionsToRedraw = dirtyRects(
+                from: presentedRenderSnapshot,
+                to: nextSnapshot
+            )
+        } else {
+            regionsToRedraw = []
+        }
+
+        guard !regionsToRedraw.isEmpty else {
+            pendingRenderSnapshot = nil
+            pendingDirtyRects.removeAll(keepingCapacity: true)
+            refreshDisplayLink?.isPaused = true
+            return
+        }
+
+        pendingRenderSnapshot = nextSnapshot
+        pendingDirtyRects = regionsToRedraw
+
+        if let refreshDisplayLink {
+            refreshDisplayLink.isPaused = false
+        } else {
+            commitPendingRender()
+        }
+    }
+
+    private func commitPendingRender() {
+        guard let nextSnapshot = pendingRenderSnapshot else {
+            refreshDisplayLink?.isPaused = true
+            return
+        }
+
+        let dirtyRects = pendingDirtyRects
+        pendingRenderSnapshot = nil
+        pendingDirtyRects.removeAll(keepingCapacity: true)
+        presentedRenderSnapshot = nextSnapshot
+
+        dirtyRects.forEach { setNeedsDisplay($0) }
+        displayIfNeeded()
+
+        if pendingRenderSnapshot == nil {
+            refreshDisplayLink?.isPaused = true
+        }
+    }
+
+    private func makeRenderSnapshot() -> RegionRenderSnapshot {
+        let dimensions = viewModel.pixelDimensions.map {
+            RegionRenderDimensions(width: $0.width, height: $0.height)
+        }
+        return RegionRenderSnapshot(
+            selectionRect: viewModel.selectionRect,
+            dimensions: dimensions,
+            startPoint: viewModel.startPoint,
+            cursorPoint: viewModel.cursorPoint,
+            hasStartedSelection: viewModel.hasStartedSelection
+        )
+    }
+
+    private func dirtyRects(
+        from oldSnapshot: RegionRenderSnapshot,
+        to newSnapshot: RegionRenderSnapshot
+    ) -> [CGRect] {
+        guard oldSnapshot != newSnapshot else { return [] }
+
+        let oldState = visualState(for: oldSnapshot)
+        let newState = visualState(for: newSnapshot)
+        var dirtyRects = RegionDirtyRegionCalculator.changedAreas(
+            from: oldState.selectionPunchRect,
+            to: newState.selectionPunchRect
+        )
+
+        if oldState.selectionBorderRect != newState.selectionBorderRect {
+            dirtyRects.append(contentsOf: borderDirtyRects(for: oldState.selectionBorderRect))
+            dirtyRects.append(contentsOf: borderDirtyRects(for: newState.selectionBorderRect))
+        }
+        if oldState.sizeLabelRect != newState.sizeLabelRect {
+            if let oldRect = oldState.sizeLabelRect {
+                dirtyRects.append(oldRect.insetBy(dx: -2, dy: -2))
+            }
+            if let newRect = newState.sizeLabelRect {
+                dirtyRects.append(newRect.insetBy(dx: -2, dy: -2))
+            }
+        }
+        if oldState.loupeRect != newState.loupeRect {
+            if let oldRect = oldState.loupeRect { dirtyRects.append(oldRect) }
+            if let newRect = newState.loupeRect { dirtyRects.append(newRect) }
+        }
+
+        let clippedRects = dirtyRects.compactMap { dirtyRect -> CGRect? in
+            let clippedRect = dirtyRect.intersection(bounds)
+            guard !clippedRect.isNull,
+                  clippedRect.width > 0,
+                  clippedRect.height > 0
+            else {
+                return nil
+            }
+            return clippedRect
+        }
+
+        // A fragmented update costs more than one full overlay redraw. This fallback is
+        // intentionally conservative and only applies to large, discontinuous jumps.
+        return clippedRects.count > 32 ? [bounds] : clippedRects
+    }
+
+    private func visualState(for renderSnapshot: RegionRenderSnapshot) -> RegionViewVisualState {
+        let visibleSelection = renderSnapshot.selectionRect?.intersection(screenFrame)
+        let selectionPunchRect = visibleSelection.flatMap { rect -> CGRect? in
+            guard !rect.isNull, rect.width > 0, rect.height > 0 else { return nil }
+            return localRect(for: rect)
+        }
+        let selectionBorderRect = renderSnapshot.selectionRect.map { localRect(for: $0) }
+        let labelRect: CGRect?
+        if cursorIsOnThisDisplay(renderSnapshot),
+           let selectionPunchRect,
+           let dimensions = renderSnapshot.dimensions
+        {
+            labelRect = sizeLabelRect(
+                for: selectionPunchRect,
+                dimensions: dimensions
+            )
+        } else {
+            labelRect = nil
+        }
+
+        let loupeDirtyRect: CGRect?
+        if shouldShowMagnifier(renderSnapshot),
+           cursorIsOnThisDisplay(renderSnapshot),
+           snapshot != nil,
+           let cursorPoint = renderSnapshot.cursorPoint
+        {
+            let rect = loupeRect(
+                near: localPoint(for: cursorPoint),
+                renderSnapshot: renderSnapshot
+            )
+            loupeDirtyRect = rect.insetBy(dx: -20, dy: -20)
+        } else {
+            loupeDirtyRect = nil
+        }
+
+        return RegionViewVisualState(
+            selectionPunchRect: selectionPunchRect,
+            selectionBorderRect: selectionBorderRect,
+            sizeLabelRect: labelRect,
+            loupeRect: loupeDirtyRect
+        )
+    }
+
+    private func borderDirtyRects(for rect: CGRect?) -> [CGRect] {
+        guard let rect, !rect.isNull, rect.width > 0, rect.height > 0 else { return [] }
+
+        let padding = max(2, 1 / backingScale + 1)
+        let thickness = padding * 2
+        return [
+            CGRect(
+                x: rect.minX - padding,
+                y: rect.minY - padding,
+                width: rect.width + thickness,
+                height: thickness
+            ),
+            CGRect(
+                x: rect.minX - padding,
+                y: rect.maxY - padding,
+                width: rect.width + thickness,
+                height: thickness
+            ),
+            CGRect(
+                x: rect.minX - padding,
+                y: rect.minY - padding,
+                width: thickness,
+                height: rect.height + thickness
+            ),
+            CGRect(
+                x: rect.maxX - padding,
+                y: rect.minY - padding,
+                width: thickness,
+                height: rect.height + thickness
+            ),
+        ]
+    }
+
+    private func cursorIsOnThisDisplay(_ renderSnapshot: RegionRenderSnapshot) -> Bool {
+        guard let cursorPoint = renderSnapshot.cursorPoint else { return false }
         return screenFrame.contains(cursorPoint)
     }
 
@@ -1424,8 +1811,11 @@ private final class RegionSelectionView: NSView {
     }
 
     private func invalidateOverlays() {
-        needsDisplay = true
-        onChange?()
+        if let onChange {
+            onChange()
+        } else {
+            scheduleRenderUpdate()
+        }
     }
 }
 
