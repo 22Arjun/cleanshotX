@@ -6,8 +6,19 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		7A000001000000000000000A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 18937A972FF77E3900A85E0A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 18937A9E2FF77E3A00A85E0A;
+			remoteInfo = clearshotX;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		18937A9F2FF77E3A00A85E0A /* clearshotX.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = clearshotX.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7A0000010000000000000001 /* clearshotXTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = clearshotXTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +27,22 @@
 			path = clearshotX;
 			sourceTree = "<group>";
 		};
+		7A0000010000000000000002 /* clearshotXTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = clearshotXTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		18937A9C2FF77E3A00A85E0A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7A0000010000000000000003 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +56,7 @@
 			isa = PBXGroup;
 			children = (
 				18937AA12FF77E3A00A85E0A /* clearshotX */,
+				7A0000010000000000000002 /* clearshotXTests */,
 				18937AA02FF77E3A00A85E0A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				18937A9F2FF77E3A00A85E0A /* clearshotX.app */,
+				7A0000010000000000000001 /* clearshotXTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -70,6 +95,29 @@
 			productReference = 18937A9F2FF77E3A00A85E0A /* clearshotX.app */;
 			productType = "com.apple.product-type.application";
 		};
+		7A0000010000000000000006 /* clearshotXTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7A0000010000000000000009 /* Build configuration list for PBXNativeTarget "clearshotXTests" */;
+			buildPhases = (
+				7A0000010000000000000005 /* Sources */,
+				7A0000010000000000000003 /* Frameworks */,
+				7A0000010000000000000004 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7A000001000000000000000B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				7A0000010000000000000002 /* clearshotXTests */,
+			);
+			name = clearshotXTests;
+			packageProductDependencies = (
+			);
+			productName = clearshotXTests;
+			productReference = 7A0000010000000000000001 /* clearshotXTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -82,6 +130,10 @@
 				TargetAttributes = {
 					18937A9E2FF77E3A00A85E0A = {
 						CreatedOnToolsVersion = 26.6;
+					};
+					7A0000010000000000000006 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 18937A9E2FF77E3A00A85E0A;
 					};
 				};
 			};
@@ -100,12 +152,20 @@
 			projectRoot = "";
 			targets = (
 				18937A9E2FF77E3A00A85E0A /* clearshotX */,
+				7A0000010000000000000006 /* clearshotXTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		18937A9D2FF77E3A00A85E0A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7A0000010000000000000004 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +182,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7A0000010000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		7A000001000000000000000B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 18937A9E2FF77E3A00A85E0A /* clearshotX */;
+			targetProxy = 7A000001000000000000000A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		18937AA82FF77E3C00A85E0A /* Debug */ = {
@@ -311,6 +386,46 @@
 			};
 			name = Release;
 		};
+		7A0000010000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M24G4R45RX;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.22Arjun.clearshotXTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/clearshotX.app/Contents/MacOS/clearshotX";
+			};
+			name = Debug;
+		};
+		7A0000010000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M24G4R45RX;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.22Arjun.clearshotXTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/clearshotX.app/Contents/MacOS/clearshotX";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -328,6 +443,15 @@
 			buildConfigurations = (
 				18937AAB2FF77E3C00A85E0A /* Debug */,
 				18937AAC2FF77E3C00A85E0A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7A0000010000000000000009 /* Build configuration list for PBXNativeTarget "clearshotXTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7A0000010000000000000007 /* Debug */,
+				7A0000010000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

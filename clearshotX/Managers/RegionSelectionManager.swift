@@ -90,28 +90,44 @@ import ScreenCaptureKit
         magnifierSize: RegionMagnifierSize,
         magnifierShowsPixelColor: Bool
     ) {
-        overlayWindows = NSScreen.screens.map { screen in
+        let screens = NSScreen.screens
+        let desktopBounds = screens.reduce(CGRect.null) { bounds, screen in
+            bounds.union(screen.frame)
+        }
+        let viewModel = RegionSelectionViewModel(
+            bounds: desktopBounds,
+            displays: screens.map {
+                RegionDisplayGeometry(
+                    frame: $0.frame,
+                    backingScale: $0.backingScaleFactor
+                )
+            }
+        )
+
+        overlayWindows = screens.map { screen in
             let window = RegionSelectionWindow(screen: screen)
             let overlayView = RegionSelectionView(
                 frame: NSRect(origin: .zero, size: screen.frame.size),
+                screenFrame: screen.frame,
                 snapshot: screen.displayID.flatMap { snapshots[$0] },
                 backingScale: screen.backingScaleFactor,
+                viewModel: viewModel,
                 magnifierMode: magnifierMode,
                 magnifierZoom: magnifierZoom,
                 magnifierSize: magnifierSize,
                 magnifierShowsPixelColor: magnifierShowsPixelColor
             )
 
-            overlayView.onComplete = { [weak self, weak window] localRect in
-                guard let self, let window else { return }
-
-                let globalRect = CGRect(
-                    x: window.frame.minX + localRect.minX, y: window.frame.minY + localRect.minY,
-                    width: localRect.width, height: localRect.height)
-                finish(with: globalRect)
+            overlayView.onComplete = { [weak self] globalRect in
+                self?.finish(with: globalRect)
             }
 
             overlayView.onCancel = { [weak self] in self?.finish(with: nil) }
+            overlayView.onChange = { [weak self] in
+                self?.overlayWindows.forEach { window in
+                    window.contentView?.needsDisplay = true
+                }
+            }
 
             window.contentView = overlayView
             return window
@@ -231,7 +247,7 @@ private final class RegionSelectionWindow: NSWindow {
     override var canBecomeMain: Bool { false }
 }
 
-private struct RegionResizeModifiers: OptionSet, Equatable {
+struct RegionResizeModifiers: OptionSet, Equatable {
     let rawValue: UInt8
 
     static let fromCenter = RegionResizeModifiers(rawValue: 1 << 0)
@@ -254,9 +270,14 @@ private enum RegionResizeAxis {
     case vertical
 }
 
-private final class RegionSelectionViewModel {
-    let bounds: CGRect
+struct RegionDisplayGeometry {
+    let frame: CGRect
     let backingScale: CGFloat
+}
+
+final class RegionSelectionViewModel {
+    let bounds: CGRect
+    private let displays: [RegionDisplayGeometry]
 
     private(set) var startPoint: CGPoint?
     private(set) var currentPoint: CGPoint?
@@ -276,18 +297,23 @@ private final class RegionSelectionViewModel {
     var hasStartedSelection: Bool { startPoint != nil }
     var isMovingSelection: Bool { movementAnchor != nil }
 
-    init(bounds: CGRect, backingScale: CGFloat) {
+    init(bounds: CGRect, displays: [RegionDisplayGeometry]) {
         self.bounds = bounds
-        self.backingScale = max(1, backingScale)
+        self.displays = displays
+    }
+
+    var backingScale: CGFloat {
+        scale(at: cursorPoint ?? currentPoint ?? startPoint)
     }
 
     var selectionRect: CGRect? {
         guard let startPoint, let currentPoint else { return nil }
 
-        return CGRect(
+        let rect = CGRect(
             x: min(startPoint.x, currentPoint.x), y: min(startPoint.y, currentPoint.y),
             width: abs(currentPoint.x - startPoint.x), height: abs(currentPoint.y - startPoint.y)
-        ).pixelAligned(scale: backingScale).intersection(bounds)
+        ).intersection(bounds)
+        return rect.pixelAligned(scale: outputScale(for: rect)).intersection(bounds)
     }
 
     var pixelDimensions: (width: Int, height: Int)? {
@@ -549,6 +575,33 @@ private final class RegionSelectionViewModel {
             )
         )
     }
+
+    private func outputScale(for rect: CGRect) -> CGFloat {
+        displays
+            .filter {
+                let intersection = $0.frame.intersection(rect)
+                return !intersection.isNull && intersection.width > 0 && intersection.height > 0
+            }
+            .map { max(1, $0.backingScale) }
+            .max() ?? backingScale
+    }
+
+    private func scale(at point: CGPoint?) -> CGFloat {
+        guard let point else {
+            return max(1, displays.first?.backingScale ?? 1)
+        }
+
+        if let display = displays.first(where: { $0.frame.contains(point) }) {
+            return max(1, display.backingScale)
+        }
+
+        return max(
+            1,
+            displays.min { lhs, rhs in
+                point.distance(to: lhs.frame) < point.distance(to: rhs.frame)
+            }?.backingScale ?? 1
+        )
+    }
 }
 
 private enum RegionLoupeQuadrant: CaseIterable {
@@ -705,8 +758,11 @@ private struct RegionPixelColor {
 private final class RegionSelectionView: NSView {
     var onComplete: ((CGRect) -> Void)?
     var onCancel: (() -> Void)?
+    var onChange: (() -> Void)?
 
+    private let screenFrame: CGRect
     private let snapshot: CGImage?
+    private let backingScale: CGFloat
     private let magnifierMode: RegionMagnifierMode
     private let magnifierZoom: RegionMagnifierZoom
     private let magnifierSize: RegionMagnifierSize
@@ -719,20 +775,23 @@ private final class RegionSelectionView: NSView {
 
     init(
         frame frameRect: NSRect,
+        screenFrame: CGRect,
         snapshot: CGImage?,
         backingScale: CGFloat,
+        viewModel: RegionSelectionViewModel,
         magnifierMode: RegionMagnifierMode,
         magnifierZoom: RegionMagnifierZoom,
         magnifierSize: RegionMagnifierSize,
         magnifierShowsPixelColor: Bool
     ) {
+        self.screenFrame = screenFrame
         self.snapshot = snapshot
+        self.backingScale = max(1, backingScale)
         self.magnifierMode = magnifierMode
         self.magnifierZoom = magnifierZoom
         self.magnifierSize = magnifierSize
         self.magnifierShowsPixelColor = magnifierShowsPixelColor
-        self.viewModel = RegionSelectionViewModel(
-            bounds: NSRect(origin: .zero, size: frameRect.size), backingScale: backingScale)
+        self.viewModel = viewModel
         super.init(frame: frameRect)
     }
 
@@ -748,11 +807,11 @@ private final class RegionSelectionView: NSView {
         window?.invalidateCursorRects(for: self)
         enforceCrosshairCursor()
 
-        guard let window else { return }
+        let mouseLocation = NSEvent.mouseLocation
+        guard screenFrame.contains(mouseLocation) else { return }
 
-        let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
-        viewModel.moveCursor(to: convert(windowPoint, from: nil))
-        needsDisplay = true
+        viewModel.moveCursor(to: mouseLocation)
+        invalidateOverlays()
     }
 
     override func updateTrackingAreas() {
@@ -790,8 +849,8 @@ private final class RegionSelectionView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         enforceCrosshairCursor()
-        viewModel.moveCursor(to: convert(event.locationInWindow, from: nil))
-        needsDisplay = true
+        viewModel.moveCursor(to: globalPoint(for: event))
+        invalidateOverlays()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -799,10 +858,10 @@ private final class RegionSelectionView: NSView {
         keyboardPointerOffset = .zero
         resizeModifiers = RegionResizeModifiers(eventFlags: event.modifierFlags)
         viewModel.beginSelection(
-            at: convert(event.locationInWindow, from: nil),
+            at: globalPoint(for: event),
             modifiers: resizeModifiers
         )
-        needsDisplay = true
+        invalidateOverlays()
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -820,7 +879,7 @@ private final class RegionSelectionView: NSView {
             viewModel.endMovingSelection()
             viewModel.updateSelection(to: point, modifiers: resizeModifiers)
         }
-        needsDisplay = true
+        invalidateOverlays()
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -858,7 +917,7 @@ private final class RegionSelectionView: NSView {
            let cursorPoint = viewModel.cursorPoint
         {
             viewModel.rebaseResizing(at: cursorPoint, modifiers: resizeModifiers)
-            needsDisplay = true
+            invalidateOverlays()
         }
     }
 
@@ -870,7 +929,7 @@ private final class RegionSelectionView: NSView {
             if !event.isARepeat {
                 isSpacePressed = true
                 viewModel.beginMovingSelection()
-                needsDisplay = true
+                invalidateOverlays()
             }
         case 123, 124, 125, 126:
             nudgeSelection(for: event)
@@ -890,7 +949,7 @@ private final class RegionSelectionView: NSView {
         if let cursorPoint = viewModel.cursorPoint {
             viewModel.rebaseResizing(at: cursorPoint, modifiers: resizeModifiers)
         }
-        needsDisplay = true
+        invalidateOverlays()
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -898,12 +957,19 @@ private final class RegionSelectionView: NSView {
         drawDimmedOverlay()
 
         if let selectionRect = viewModel.selectionRect {
-            drawSelectionBorder(for: selectionRect)
-            drawSizeLabel(for: selectionRect)
+            let localSelectionRect = localRect(for: selectionRect)
+            drawSelectionBorder(for: localSelectionRect)
+            let visibleSelection = selectionRect.intersection(screenFrame)
+            if cursorIsOnThisDisplay, !visibleSelection.isNull {
+                drawSizeLabel(for: localRect(for: visibleSelection))
+            }
         }
 
-        if shouldShowMagnifier, let cursorPoint = viewModel.cursorPoint {
-            drawLoupe(near: cursorPoint)
+        if shouldShowMagnifier,
+           cursorIsOnThisDisplay,
+           let cursorPoint = viewModel.cursorPoint
+        {
+            drawLoupe(near: localPoint(for: cursorPoint))
         }
     }
 
@@ -955,22 +1021,25 @@ private final class RegionSelectionView: NSView {
         keyboardPointerOffset.dx += currentPoint.x - previousCurrentPoint.x
         keyboardPointerOffset.dy += currentPoint.y - previousCurrentPoint.y
         viewModel.rebaseResizing(at: currentPoint, modifiers: resizeModifiers)
-        needsDisplay = true
+        invalidateOverlays()
     }
 
     private func selectionPoint(for event: NSEvent) -> CGPoint {
-        let point = convert(event.locationInWindow, from: nil)
+        let point = globalPoint(for: event)
         return CGPoint(
             x: point.x + keyboardPointerOffset.dx,
             y: point.y + keyboardPointerOffset.dy
-        ).clamped(to: bounds)
+        ).clamped(to: viewModel.bounds)
     }
 
     private func drawDimmedOverlay() {
         let dimPath = NSBezierPath(rect: bounds)
         if let selectionRect = viewModel.selectionRect {
-            dimPath.append(NSBezierPath(rect: selectionRect))
-            dimPath.windingRule = .evenOdd
+            let visibleSelection = selectionRect.intersection(screenFrame)
+            if !visibleSelection.isNull {
+                dimPath.append(NSBezierPath(rect: localRect(for: visibleSelection)))
+                dimPath.windingRule = .evenOdd
+            }
         }
 
         NSColor.black.withAlphaComponent(0.30).setFill()
@@ -979,7 +1048,7 @@ private final class RegionSelectionView: NSView {
 
     private func drawSelectionBorder(for rect: CGRect) {
         let borderPath = NSBezierPath(rect: rect)
-        borderPath.lineWidth = 1 / viewModel.backingScale
+        borderPath.lineWidth = 1 / backingScale
         NSColor.white.setStroke()
         borderPath.stroke()
     }
@@ -1139,8 +1208,8 @@ private final class RegionSelectionView: NSView {
 
         return RegionLoupePlacement.rect(
             near: cursorPoint,
-            dragOrigin: viewModel.startPoint,
-            selectionRect: viewModel.selectionRect,
+            dragOrigin: viewModel.startPoint.map { localPoint(for: $0) },
+            selectionRect: viewModel.selectionRect.map { localRect(for: $0) },
             within: bounds,
             size: magnifierSize.dimensions,
             offset: offset,
@@ -1259,7 +1328,7 @@ private final class RegionSelectionView: NSView {
             : footerRect.minY
         separator.move(to: CGPoint(x: footerRect.minX, y: separatorY))
         separator.line(to: CGPoint(x: footerRect.maxX, y: separatorY))
-        separator.lineWidth = 1 / viewModel.backingScale
+        separator.lineWidth = 1 / backingScale
         NSColor.white.withAlphaComponent(0.26).setStroke()
         separator.stroke()
 
@@ -1317,8 +1386,46 @@ private final class RegionSelectionView: NSView {
         isSpacePressed = false
         keyboardPointerOffset = .zero
         viewModel.clearSelection()
-        needsDisplay = true
+        invalidateOverlays()
         onCancel?()
+    }
+
+    private var cursorIsOnThisDisplay: Bool {
+        guard let cursorPoint = viewModel.cursorPoint else { return false }
+        return screenFrame.contains(cursorPoint)
+    }
+
+    private func globalPoint(for event: NSEvent) -> CGPoint {
+        if let window {
+            return window.convertPoint(toScreen: event.locationInWindow)
+        }
+
+        let localPoint = convert(event.locationInWindow, from: nil)
+        return CGPoint(
+            x: screenFrame.minX + localPoint.x,
+            y: screenFrame.minY + localPoint.y
+        )
+    }
+
+    private func localPoint(for globalPoint: CGPoint) -> CGPoint {
+        CGPoint(
+            x: globalPoint.x - screenFrame.minX,
+            y: globalPoint.y - screenFrame.minY
+        )
+    }
+
+    private func localRect(for globalRect: CGRect) -> CGRect {
+        CGRect(
+            x: globalRect.minX - screenFrame.minX,
+            y: globalRect.minY - screenFrame.minY,
+            width: globalRect.width,
+            height: globalRect.height
+        )
+    }
+
+    private func invalidateOverlays() {
+        needsDisplay = true
+        onChange?()
     }
 }
 
@@ -1335,6 +1442,12 @@ extension CGPoint {
 
     fileprivate func translated(by delta: CGVector) -> CGPoint {
         CGPoint(x: x + delta.dx, y: y + delta.dy)
+    }
+
+    fileprivate func distance(to rect: CGRect) -> CGFloat {
+        let dx = max(0, max(rect.minX - x, x - rect.maxX))
+        let dy = max(0, max(rect.minY - y, y - rect.maxY))
+        return hypot(dx, dy)
     }
 }
 

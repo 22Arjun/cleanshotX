@@ -42,6 +42,12 @@ enum ScreenCaptureServiceError: LocalizedError {
     }
 }
 
+struct DisplayRegionCapture {
+    let image: CGImage
+    let globalRect: CGRect
+    let scale: CGFloat
+}
+
 final class ScreenCaptureService {
     private let captureStore: CaptureStoring
     private var didRequestScreenRecordingPermission = false
@@ -133,54 +139,57 @@ final class ScreenCaptureService {
 
         let content = try await SCShareableContent.current
 
-        guard let display = display(containing: region, from: content.displays) else {
+        let displayRegions: [(display: SCDisplay, frame: CGRect, captureRect: CGRect)] =
+            content.displays.compactMap { display in
+                let displayFrame = appKitFrame(for: display)
+                let intersection = region.intersection(displayFrame)
+                guard !intersection.isNull,
+                      intersection.width > 0,
+                      intersection.height > 0
+                else {
+                    return nil
+                }
+                return (
+                    display: display,
+                    frame: displayFrame,
+                    captureRect: intersection
+                )
+            }
+
+        guard !displayRegions.isEmpty else {
             throw ScreenCaptureServiceError.noDisplayAvailable
         }
-
-        let captureRect = region.intersection(display.frame)
-
-        guard captureRect.width > 0, captureRect.height > 0 else {
-            throw ScreenCaptureServiceError.invalidRegion
-        }
-
-        // The selection overlay uses AppKit's global, bottom-left coordinate space.
-        // ScreenCaptureKit expects a display-local crop rectangle with a top-left
-        // origin, so both the display offset and vertical orientation must change.
-        let proposedSourceRect = CGRect(
-            x: captureRect.minX - display.frame.minX,
-            y: display.frame.maxY - captureRect.maxY,
-            width: captureRect.width,
-            height: captureRect.height
-        )
 
         let excludedApplications = content.applications.filter { application in
             application.bundleIdentifier == Bundle.main.bundleIdentifier
         }
 
-        let filter = SCContentFilter(
-            display: display,
-            excludingApplications: excludedApplications,
-            exceptingWindows: []
-        )
-        filter.includeMenuBar = true
-
-        let configuration = SCStreamConfiguration()
-        let scale = CGFloat(filter.pointPixelScale)
-        let sourceRect = proposedSourceRect.pixelAligned(scale: scale)
-        guard sourceRect.width > 0, sourceRect.height > 0 else {
-            throw ScreenCaptureServiceError.invalidRegion
+        var captures: [DisplayRegionCapture] = []
+        captures.reserveCapacity(displayRegions.count)
+        for displayRegion in displayRegions {
+            captures.append(
+                try await captureDisplayRegion(
+                    displayRegion.captureRect,
+                    on: displayRegion.display,
+                    displayFrame: displayRegion.frame,
+                    excludingApplications: excludedApplications
+                )
+            )
         }
 
-        configuration.sourceRect = sourceRect
-        configuration.width = max(1, Int((sourceRect.width * scale).rounded()))
-        configuration.height = max(1, Int((sourceRect.height * scale).rounded()))
-        configuration.showsCursor = false
-        configuration.scalesToFit = false
+        let cgImage: CGImage
+        if captures.count == 1,
+           let onlyDisplayFrame = displayRegions.first?.frame,
+           onlyDisplayFrame.contains(region)
+        {
+            cgImage = captures[0].image
+        } else {
+            cgImage = try Self.compositeRegionImage(from: captures, selectedRegion: region)
+        }
 
-        let cgImage = try await SCScreenshotManager.captureImage(
-            contentFilter: filter,
-            configuration: configuration
-        )
+        let presentationDisplay = displayRegions.max { lhs, rhs in
+            lhs.captureRect.area < rhs.captureRect.area
+        }
 
         let storedCapture = try captureStore.store(cgImage)
         let image = NSImage(
@@ -194,8 +203,128 @@ final class ScreenCaptureService {
             dragFileURL: storedCapture.dragFileURL,
             pixelWidth: cgImage.width,
             pixelHeight: cgImage.height,
-            screenFrame: display.frame
+            screenFrame: presentationDisplay?.frame ?? region
         )
+    }
+
+    private func captureDisplayRegion(
+        _ captureRect: CGRect,
+        on display: SCDisplay,
+        displayFrame: CGRect,
+        excludingApplications: [SCRunningApplication]
+    ) async throws -> DisplayRegionCapture {
+        // The selection overlay uses AppKit's global, bottom-left coordinate space.
+        // ScreenCaptureKit expects a display-local crop rectangle with a top-left
+        // origin, so both the display offset and vertical orientation must change.
+        let proposedSourceRect = CGRect(
+            x: captureRect.minX - displayFrame.minX,
+            y: displayFrame.maxY - captureRect.maxY,
+            width: captureRect.width,
+            height: captureRect.height
+        )
+
+        let filter = SCContentFilter(
+            display: display,
+            excludingApplications: excludingApplications,
+            exceptingWindows: []
+        )
+        filter.includeMenuBar = true
+
+        let scale = max(1, CGFloat(filter.pointPixelScale))
+        let displayLocalBounds = CGRect(origin: .zero, size: displayFrame.size)
+        let sourceRect = proposedSourceRect
+            .pixelAligned(scale: scale)
+            .intersection(displayLocalBounds)
+        guard !sourceRect.isNull,
+              sourceRect.width > 0,
+              sourceRect.height > 0
+        else {
+            throw ScreenCaptureServiceError.invalidRegion
+        }
+
+        let configuration = SCStreamConfiguration()
+        configuration.sourceRect = sourceRect
+        configuration.width = max(1, Int((sourceRect.width * scale).rounded()))
+        configuration.height = max(1, Int((sourceRect.height * scale).rounded()))
+        configuration.showsCursor = false
+        configuration.scalesToFit = false
+
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: filter,
+            configuration: configuration
+        )
+        let globalRect = CGRect(
+            x: displayFrame.minX + sourceRect.minX,
+            y: displayFrame.maxY - sourceRect.maxY,
+            width: sourceRect.width,
+            height: sourceRect.height
+        )
+
+        return DisplayRegionCapture(
+            image: image,
+            globalRect: globalRect,
+            scale: scale
+        )
+    }
+
+    static func compositeRegionImage(
+        from captures: [DisplayRegionCapture],
+        selectedRegion: CGRect
+    ) throws -> CGImage {
+        guard let outputScale = captures.map(\.scale).max() else {
+            throw ScreenCaptureServiceError.noImageReturned
+        }
+
+        let outputRect = selectedRegion.pixelAligned(scale: outputScale)
+        let pixelWidth = max(1, Int((outputRect.width * outputScale).rounded()))
+        let pixelHeight = max(1, Int((outputRect.height * outputScale).rounded()))
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil,
+                  width: pixelWidth,
+                  height: pixelHeight,
+                  bitsPerComponent: 8,
+                  bytesPerRow: 0,
+                  space: colorSpace,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else {
+            throw ScreenCaptureServiceError.noImageReturned
+        }
+
+        // A rectangular image must also represent empty space in offset monitor
+        // layouts. Black matches the WindowServer's treatment of that desktop gap.
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
+
+        for capture in captures {
+            // Use the highest intersected display scale for a coherent canvas.
+            // Lower-density display pieces are resampled; Retina pieces stay native.
+            let destinationRect = CGRect(
+                x: (capture.globalRect.minX - outputRect.minX) * outputScale,
+                y: (capture.globalRect.minY - outputRect.minY) * outputScale,
+                width: capture.globalRect.width * outputScale,
+                height: capture.globalRect.height * outputScale
+            )
+            context.interpolationQuality = capture.scale == outputScale ? .none : .high
+            context.draw(capture.image, in: destinationRect)
+        }
+
+        guard let image = context.makeImage() else {
+            throw ScreenCaptureServiceError.noImageReturned
+        }
+        return image
+    }
+
+    private func appKitFrame(for display: SCDisplay) -> CGRect {
+        NSScreen.screens.first { screen in
+            guard let screenNumber = screen.deviceDescription[
+                NSDeviceDescriptionKey("NSScreenNumber")
+            ] as? CGDirectDisplayID else {
+                return false
+            }
+            return screenNumber == display.displayID
+        }?.frame ?? display.frame
     }
 
     func availableWindows() async throws -> [SCWindow] {
