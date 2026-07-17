@@ -17,7 +17,11 @@ import ScreenCaptureKit
     private var isSelecting = false
     private var didPushCursor = false
 
-    func selectRegion(magnifierMode: RegionMagnifierMode) async -> CGRect? {
+    func selectRegion(
+        magnifierMode: RegionMagnifierMode,
+        magnifierZoom: RegionMagnifierZoom,
+        magnifierSize: RegionMagnifierSize
+    ) async -> CGRect? {
         guard !isSelecting else { return nil }
 
         isSelecting = true
@@ -35,7 +39,12 @@ import ScreenCaptureKit
 
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
-            showOverlays(snapshots: snapshots, magnifierMode: magnifierMode)
+            showOverlays(
+                snapshots: snapshots,
+                magnifierMode: magnifierMode,
+                magnifierZoom: magnifierZoom,
+                magnifierSize: magnifierSize
+            )
         }
     }
 
@@ -73,14 +82,21 @@ import ScreenCaptureKit
     }
 
     private func showOverlays(
-        snapshots: [CGDirectDisplayID: CGImage], magnifierMode: RegionMagnifierMode
+        snapshots: [CGDirectDisplayID: CGImage],
+        magnifierMode: RegionMagnifierMode,
+        magnifierZoom: RegionMagnifierZoom,
+        magnifierSize: RegionMagnifierSize
     ) {
         overlayWindows = NSScreen.screens.map { screen in
             let window = RegionSelectionWindow(screen: screen)
             let overlayView = RegionSelectionView(
                 frame: NSRect(origin: .zero, size: screen.frame.size),
                 snapshot: screen.displayID.flatMap { snapshots[$0] },
-                backingScale: screen.backingScaleFactor, magnifierMode: magnifierMode)
+                backingScale: screen.backingScaleFactor,
+                magnifierMode: magnifierMode,
+                magnifierZoom: magnifierZoom,
+                magnifierSize: magnifierSize
+            )
 
             overlayView.onComplete = { [weak self, weak window] localRect in
                 guard let self, let window else { return }
@@ -370,15 +386,23 @@ private final class RegionSelectionView: NSView {
 
     private let snapshot: CGImage?
     private let magnifierMode: RegionMagnifierMode
+    private let magnifierZoom: RegionMagnifierZoom
+    private let magnifierSize: RegionMagnifierSize
     private let viewModel: RegionSelectionViewModel
     private var cursorTrackingArea: NSTrackingArea?
 
     init(
-        frame frameRect: NSRect, snapshot: CGImage?, backingScale: CGFloat,
-        magnifierMode: RegionMagnifierMode
+        frame frameRect: NSRect,
+        snapshot: CGImage?,
+        backingScale: CGFloat,
+        magnifierMode: RegionMagnifierMode,
+        magnifierZoom: RegionMagnifierZoom,
+        magnifierSize: RegionMagnifierSize
     ) {
         self.snapshot = snapshot
         self.magnifierMode = magnifierMode
+        self.magnifierZoom = magnifierZoom
+        self.magnifierSize = magnifierSize
         self.viewModel = RegionSelectionViewModel(
             bounds: NSRect(origin: .zero, size: frameRect.size), backingScale: backingScale)
         super.init(frame: frameRect)
@@ -524,25 +548,44 @@ private final class RegionSelectionView: NSView {
     private func drawLoupe(near cursorPoint: CGPoint) {
         guard let snapshot, bounds.width > 0, bounds.height > 0 else { return }
 
-        let sampleSide = min(15, snapshot.width, snapshot.height)
-        guard sampleSide > 0 else { return }
+        let loupeRect = loupeRect(near: cursorPoint)
+        let contentInset: CGFloat = 6
+        let imageRect = loupeRect.insetBy(dx: contentInset, dy: contentInset)
+        let sampleWidth = samplePixelCount(
+            for: imageRect.width,
+            maximum: snapshot.width
+        )
+        let sampleHeight = samplePixelCount(
+            for: imageRect.height,
+            maximum: snapshot.height
+        )
+        guard sampleWidth > 0, sampleHeight > 0 else { return }
 
         let scaleX = CGFloat(snapshot.width) / bounds.width
         let scaleY = CGFloat(snapshot.height) / bounds.height
         let pixelX = cursorPoint.x * scaleX
         let pixelY = (bounds.height - cursorPoint.y) * scaleY
-        let sampleSideValue = CGFloat(sampleSide)
+        let sampleWidthValue = CGFloat(sampleWidth)
+        let sampleHeightValue = CGFloat(sampleHeight)
         let cropOriginX = min(
-            max(0, floor(pixelX - sampleSideValue / 2)), CGFloat(snapshot.width - sampleSide))
+            max(0, floor(pixelX - sampleWidthValue / 2)),
+            CGFloat(snapshot.width - sampleWidth)
+        )
         let cropOriginY = min(
-            max(0, floor(pixelY - sampleSideValue / 2)), CGFloat(snapshot.height - sampleSide))
+            max(0, floor(pixelY - sampleHeightValue / 2)),
+            CGFloat(snapshot.height - sampleHeight)
+        )
         let cropRect = CGRect(
-            x: cropOriginX, y: cropOriginY, width: sampleSideValue, height: sampleSideValue)
+            x: cropOriginX,
+            y: cropOriginY,
+            width: sampleWidthValue,
+            height: sampleHeightValue
+        )
 
         guard let croppedImage = snapshot.cropping(to: cropRect) else { return }
 
-        let loupeRect = loupeRect(near: cursorPoint)
-        let imageRect = loupeRect.insetBy(dx: 5, dy: 5)
+        let outerCornerRadius: CGFloat = 14
+        let innerCornerRadius: CGFloat = 9
 
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
@@ -551,29 +594,53 @@ private final class RegionSelectionView: NSView {
         shadow.shadowOffset = NSSize(width: 0, height: -4)
         shadow.set()
         NSColor.black.withAlphaComponent(0.92).setFill()
-        NSBezierPath(ovalIn: loupeRect).fill()
+        NSBezierPath(
+            roundedRect: loupeRect,
+            xRadius: outerCornerRadius,
+            yRadius: outerCornerRadius
+        ).fill()
         NSGraphicsContext.restoreGraphicsState()
 
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(ovalIn: imageRect).addClip()
+        NSBezierPath(
+            roundedRect: imageRect,
+            xRadius: innerCornerRadius,
+            yRadius: innerCornerRadius
+        ).addClip()
         NSGraphicsContext.current?.imageInterpolation = .none
         let image = NSImage(
-            cgImage: croppedImage, size: NSSize(width: sampleSide, height: sampleSide))
+            cgImage: croppedImage,
+            size: NSSize(width: CGFloat(sampleWidth), height: CGFloat(sampleHeight))
+        )
         image.draw(
-            in: imageRect, from: .zero, operation: .copy, fraction: 1, respectFlipped: true,
-            hints: [.interpolation: NSImageInterpolation.none])
+            in: imageRect,
+            from: .zero,
+            operation: .copy,
+            fraction: 1,
+            respectFlipped: true,
+            hints: [.interpolation: NSImageInterpolation.none]
+        )
         NSGraphicsContext.restoreGraphicsState()
 
-        let outline = NSBezierPath(ovalIn: loupeRect.insetBy(dx: 0.5, dy: 0.5))
+        let outline = NSBezierPath(
+            roundedRect: loupeRect.insetBy(dx: 0.5, dy: 0.5),
+            xRadius: outerCornerRadius,
+            yRadius: outerCornerRadius
+        )
         outline.lineWidth = 1
         NSColor.white.withAlphaComponent(0.92).setStroke()
         outline.stroke()
 
-        drawLoupeCrosshair(in: imageRect)
+        drawLoupeCrosshair(
+            in: imageRect,
+            pixelSize: CGSize(
+                width: imageRect.width / CGFloat(sampleWidth),
+                height: imageRect.height / CGFloat(sampleHeight)
+            )
+        )
     }
 
     private func loupeRect(near cursorPoint: CGPoint) -> CGRect {
-        let diameter: CGFloat = 104
         let offset: CGFloat = 22
         let edgeInset: CGFloat = 8
 
@@ -582,13 +649,22 @@ private final class RegionSelectionView: NSView {
             dragOrigin: viewModel.startPoint,
             selectionRect: viewModel.selectionRect,
             within: bounds,
-            size: CGSize(width: diameter, height: diameter),
+            size: magnifierSize.dimensions,
             offset: offset,
             edgeInset: edgeInset
         )
     }
 
-    private func drawLoupeCrosshair(in rect: CGRect) {
+    private func samplePixelCount(for displayLength: CGFloat, maximum: Int) -> Int {
+        let desiredCount = max(
+            1,
+            Int((displayLength / CGFloat(magnifierZoom.rawValue)).rounded())
+        )
+        let oddCount = desiredCount.isMultiple(of: 2) ? desiredCount + 1 : desiredCount
+        return min(maximum, oddCount)
+    }
+
+    private func drawLoupeCrosshair(in rect: CGRect, pixelSize: CGSize) {
         let horizontal = NSBezierPath()
         horizontal.move(to: CGPoint(x: rect.minX, y: rect.midY))
         horizontal.line(to: CGPoint(x: rect.maxX, y: rect.midY))
@@ -603,7 +679,12 @@ private final class RegionSelectionView: NSView {
         horizontal.stroke()
         vertical.stroke()
 
-        let centerPixel = CGRect(x: rect.midX - 3, y: rect.midY - 3, width: 6, height: 6)
+        let centerPixel = CGRect(
+            x: rect.midX - pixelSize.width / 2,
+            y: rect.midY - pixelSize.height / 2,
+            width: pixelSize.width,
+            height: pixelSize.height
+        )
         let centerPath = NSBezierPath(rect: centerPixel)
         centerPath.lineWidth = 1
         NSColor.white.setStroke()

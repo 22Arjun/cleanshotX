@@ -18,6 +18,8 @@ final class AppShellViewModel: ObservableObject {
     @Published private(set) var activeHotkeyMode: GlobalHotkeyMode = .preferred
     @Published private(set) var isCaptureSoundEnabled: Bool
     @Published private(set) var regionMagnifierMode: RegionMagnifierMode
+    @Published private(set) var regionMagnifierZoom: RegionMagnifierZoom
+    @Published private(set) var regionMagnifierSize: RegionMagnifierSize
     @Published private(set) var captureSaveMode: CaptureSaveMode
     @Published private(set) var captureSaveFolderPath: String?
     @Published private(set) var hasDefaultCaptureFolderAuthorization: Bool
@@ -99,6 +101,8 @@ final class AppShellViewModel: ObservableObject {
         self.alertPresenter = alertPresenter ?? AlertPresenter()
         self.isCaptureSoundEnabled = self.captureSoundService.isEnabled
         self.regionMagnifierMode = resolvedRegionCapturePreferences.magnifierMode
+        self.regionMagnifierZoom = resolvedRegionCapturePreferences.magnifierZoom
+        self.regionMagnifierSize = resolvedRegionCapturePreferences.magnifierSize
         self.captureSaveMode = resolvedSavePreferences.mode
         self.captureSaveFolderPath = resolvedSavePreferences.captureFolderDisplayPath
         self.hasDefaultCaptureFolderAuthorization = resolvedSavePreferences.hasDefaultFolderAuthorization
@@ -162,7 +166,9 @@ final class AppShellViewModel: ObservableObject {
             }
 
             guard let region = await regionSelectionManager.selectRegion(
-                magnifierMode: regionMagnifierMode
+                magnifierMode: regionMagnifierMode,
+                magnifierZoom: regionMagnifierZoom,
+                magnifierSize: regionMagnifierSize
             ) else {
                 return
             }
@@ -227,6 +233,16 @@ final class AppShellViewModel: ObservableObject {
     func setRegionMagnifierMode(_ mode: RegionMagnifierMode) {
         regionCapturePreferences.magnifierMode = mode
         regionMagnifierMode = mode
+    }
+
+    func setRegionMagnifierZoom(_ zoom: RegionMagnifierZoom) {
+        regionCapturePreferences.magnifierZoom = zoom
+        regionMagnifierZoom = zoom
+    }
+
+    func setRegionMagnifierSize(_ size: RegionMagnifierSize) {
+        regionCapturePreferences.magnifierSize = size
+        regionMagnifierSize = size
     }
 
     func setCaptureSaveMode(_ mode: CaptureSaveMode) {

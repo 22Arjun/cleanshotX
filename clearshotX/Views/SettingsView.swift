@@ -106,6 +106,59 @@ struct SettingsView: View {
                 Text(viewModel.regionMagnifierMode.detail)
                     .font(.system(size: 12))
                     .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 16) {
+                        Text("Zoom")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+
+                        Spacer()
+
+                        Picker(
+                            "Magnifier zoom",
+                            selection: Binding(
+                                get: { viewModel.regionMagnifierZoom },
+                                set: { viewModel.setRegionMagnifierZoom($0) }
+                            )
+                        ) {
+                            ForEach(RegionMagnifierZoom.allCases) { zoom in
+                                Text(zoom.title)
+                                    .tag(zoom)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 190)
+                    }
+
+                    HStack(spacing: 16) {
+                        Text("Size")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+
+                        Spacer()
+
+                        Picker(
+                            "Magnifier size",
+                            selection: Binding(
+                                get: { viewModel.regionMagnifierSize },
+                                set: { viewModel.setRegionMagnifierSize($0) }
+                            )
+                        ) {
+                            ForEach(RegionMagnifierSize.allCases) { size in
+                                Text(size.title)
+                                    .tag(size)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 190)
+                    }
+                }
+                .frame(width: 420)
+                .disabled(viewModel.regionMagnifierMode == .off)
+                .opacity(viewModel.regionMagnifierMode == .off ? 0.45 : 1)
             }
 
             Divider()
