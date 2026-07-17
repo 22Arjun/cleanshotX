@@ -231,6 +231,29 @@ private final class RegionSelectionWindow: NSWindow {
     override var canBecomeMain: Bool { false }
 }
 
+private struct RegionResizeModifiers: OptionSet, Equatable {
+    let rawValue: UInt8
+
+    static let fromCenter = RegionResizeModifiers(rawValue: 1 << 0)
+    static let lockAxis = RegionResizeModifiers(rawValue: 1 << 1)
+
+    init(rawValue: UInt8) {
+        self.rawValue = rawValue
+    }
+
+    init(eventFlags: NSEvent.ModifierFlags) {
+        var modifiers: RegionResizeModifiers = []
+        if eventFlags.contains(.option) { modifiers.insert(.fromCenter) }
+        if eventFlags.contains(.shift) { modifiers.insert(.lockAxis) }
+        self = modifiers
+    }
+}
+
+private enum RegionResizeAxis {
+    case horizontal
+    case vertical
+}
+
 private final class RegionSelectionViewModel {
     let bounds: CGRect
     let backingScale: CGFloat
@@ -242,6 +265,13 @@ private final class RegionSelectionViewModel {
     private var movementAnchor: CGPoint?
     private var movementStartPoint: CGPoint?
     private var movementCurrentPoint: CGPoint?
+
+    private var resizeModifiers: RegionResizeModifiers = []
+    private var resizePointerAnchor: CGPoint?
+    private var resizeStartPoint: CGPoint?
+    private var resizeCurrentPoint: CGPoint?
+    private var lockedResizeAxis: RegionResizeAxis?
+    private var canLockResizeAxis = false
 
     var hasStartedSelection: Bool { startPoint != nil }
     var isMovingSelection: Bool { movementAnchor != nil }
@@ -271,16 +301,64 @@ private final class RegionSelectionViewModel {
 
     func moveCursor(to point: CGPoint) { cursorPoint = point.clamped(to: bounds) }
 
-    func beginSelection(at point: CGPoint) {
+    func beginSelection(at point: CGPoint, modifiers: RegionResizeModifiers) {
         let point = point.clamped(to: bounds)
         startPoint = point
         currentPoint = point
         cursorPoint = point
+        rebaseResizing(at: point, modifiers: modifiers)
     }
 
-    func updateSelection(to point: CGPoint) {
+    func updateSelection(to point: CGPoint, modifiers: RegionResizeModifiers) {
         let point = point.clamped(to: bounds)
-        currentPoint = point
+
+        if modifiers != resizeModifiers {
+            rebaseResizing(at: cursorPoint ?? point, modifiers: modifiers)
+        }
+
+        guard let resizePointerAnchor,
+              let resizeStartPoint,
+              let resizeCurrentPoint
+        else {
+            currentPoint = point
+            cursorPoint = point
+            return
+        }
+
+        var delta = CGVector(
+            dx: point.x - resizePointerAnchor.x,
+            dy: point.y - resizePointerAnchor.y
+        )
+        delta = axisLockedDelta(delta, modifiers: modifiers)
+
+        if modifiers.contains(.fromCenter) {
+            delta = clampedCenteredResizeDelta(
+                delta,
+                startPoint: resizeStartPoint,
+                currentPoint: resizeCurrentPoint
+            )
+            startPoint = resizeStartPoint.translated(
+                by: CGVector(dx: -delta.dx, dy: -delta.dy)
+            )
+            currentPoint = resizeCurrentPoint.translated(by: delta)
+        } else {
+            startPoint = resizeStartPoint
+            currentPoint = resizeCurrentPoint.translated(by: delta).clamped(to: bounds)
+        }
+
+        cursorPoint = point
+    }
+
+    func rebaseResizing(at point: CGPoint, modifiers: RegionResizeModifiers) {
+        let point = point.clamped(to: bounds)
+        resizeModifiers = modifiers
+        resizePointerAnchor = point
+        resizeStartPoint = startPoint ?? point
+        resizeCurrentPoint = currentPoint ?? point
+        lockedResizeAxis = nil
+        canLockResizeAxis = selectionRect.map {
+            $0.width > 0 && $0.height > 0
+        } ?? false
         cursorPoint = point
     }
 
@@ -334,15 +412,35 @@ private final class RegionSelectionViewModel {
     }
 
     @discardableResult
-    func nudgeActiveCorner(by delta: CGVector) -> Bool {
-        guard let currentPoint else {
+    func nudgeActiveCorner(by proposedDelta: CGVector, fromCenter: Bool) -> Bool {
+        guard let startPoint,
+              let currentPoint
+        else {
             return false
         }
 
-        let adjustedPoint = currentPoint.translated(by: delta).clamped(to: bounds)
+        let delta: CGVector
+        if fromCenter {
+            delta = clampedCenteredResizeDelta(
+                proposedDelta,
+                startPoint: startPoint,
+                currentPoint: currentPoint
+            )
+            self.startPoint = startPoint.translated(
+                by: CGVector(dx: -delta.dx, dy: -delta.dy)
+            )
+        } else {
+            let adjustedPoint = currentPoint.translated(by: proposedDelta).clamped(to: bounds)
+            delta = CGVector(
+                dx: adjustedPoint.x - currentPoint.x,
+                dy: adjustedPoint.y - currentPoint.y
+            )
+        }
+
+        let adjustedPoint = currentPoint.translated(by: delta)
         self.currentPoint = adjustedPoint
         cursorPoint = adjustedPoint
-        return true
+        return delta.dx != 0 || delta.dy != 0
     }
 
     @discardableResult
@@ -381,7 +479,62 @@ private final class RegionSelectionViewModel {
     func clearSelection() {
         startPoint = nil
         currentPoint = nil
+        resizePointerAnchor = nil
+        resizeStartPoint = nil
+        resizeCurrentPoint = nil
+        lockedResizeAxis = nil
+        canLockResizeAxis = false
         endMovingSelection()
+    }
+
+    private func axisLockedDelta(
+        _ delta: CGVector,
+        modifiers: RegionResizeModifiers
+    ) -> CGVector {
+        guard modifiers.contains(.lockAxis), canLockResizeAxis else {
+            return delta
+        }
+
+        if lockedResizeAxis == nil, delta.dx != 0 || delta.dy != 0 {
+            lockedResizeAxis = abs(delta.dx) >= abs(delta.dy) ? .horizontal : .vertical
+        }
+
+        switch lockedResizeAxis {
+        case .horizontal:
+            return CGVector(dx: delta.dx, dy: 0)
+        case .vertical:
+            return CGVector(dx: 0, dy: delta.dy)
+        case nil:
+            return .zero
+        }
+    }
+
+    private func clampedCenteredResizeDelta(
+        _ delta: CGVector,
+        startPoint: CGPoint,
+        currentPoint: CGPoint
+    ) -> CGVector {
+        let minimumDX = max(
+            bounds.minX - currentPoint.x,
+            startPoint.x - bounds.maxX
+        )
+        let maximumDX = min(
+            bounds.maxX - currentPoint.x,
+            startPoint.x - bounds.minX
+        )
+        let minimumDY = max(
+            bounds.minY - currentPoint.y,
+            startPoint.y - bounds.maxY
+        )
+        let maximumDY = min(
+            bounds.maxY - currentPoint.y,
+            startPoint.y - bounds.minY
+        )
+
+        return CGVector(
+            dx: min(max(delta.dx, minimumDX), maximumDX),
+            dy: min(max(delta.dy, minimumDY), maximumDY)
+        )
     }
 
     private func clampedTranslation(_ delta: CGVector, for rect: CGRect) -> CGVector {
@@ -561,6 +714,7 @@ private final class RegionSelectionView: NSView {
     private let viewModel: RegionSelectionViewModel
     private var cursorTrackingArea: NSTrackingArea?
     private var isSpacePressed = false
+    private var resizeModifiers: RegionResizeModifiers = []
     private var keyboardPointerOffset = CGVector.zero
 
     init(
@@ -643,23 +797,28 @@ private final class RegionSelectionView: NSView {
     override func mouseDown(with event: NSEvent) {
         enforceCrosshairCursor()
         keyboardPointerOffset = .zero
-        viewModel.beginSelection(at: convert(event.locationInWindow, from: nil))
+        resizeModifiers = RegionResizeModifiers(eventFlags: event.modifierFlags)
+        viewModel.beginSelection(
+            at: convert(event.locationInWindow, from: nil),
+            modifiers: resizeModifiers
+        )
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
         enforceCrosshairCursor()
         let point = selectionPoint(for: event)
+        resizeModifiers = RegionResizeModifiers(eventFlags: event.modifierFlags)
         if isSpacePressed {
             viewModel.beginMovingSelection()
             if viewModel.isMovingSelection {
                 viewModel.moveSelection(to: point)
             } else {
-                viewModel.updateSelection(to: point)
+                viewModel.updateSelection(to: point, modifiers: resizeModifiers)
             }
         } else {
             viewModel.endMovingSelection()
-            viewModel.updateSelection(to: point)
+            viewModel.updateSelection(to: point, modifiers: resizeModifiers)
         }
         needsDisplay = true
     }
@@ -670,7 +829,8 @@ private final class RegionSelectionView: NSView {
         if viewModel.isMovingSelection {
             viewModel.moveSelection(to: point)
         } else {
-            viewModel.updateSelection(to: point)
+            resizeModifiers = RegionResizeModifiers(eventFlags: event.modifierFlags)
+            viewModel.updateSelection(to: point, modifiers: resizeModifiers)
         }
         viewModel.endMovingSelection()
 
@@ -683,6 +843,23 @@ private final class RegionSelectionView: NSView {
         }
 
         onComplete?(selectionRect)
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        let updatedModifiers = RegionResizeModifiers(eventFlags: event.modifierFlags)
+        guard updatedModifiers != resizeModifiers else {
+            super.flagsChanged(with: event)
+            return
+        }
+
+        resizeModifiers = updatedModifiers
+        if viewModel.hasStartedSelection,
+           !isSpacePressed,
+           let cursorPoint = viewModel.cursorPoint
+        {
+            viewModel.rebaseResizing(at: cursorPoint, modifiers: resizeModifiers)
+            needsDisplay = true
+        }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -710,6 +887,9 @@ private final class RegionSelectionView: NSView {
 
         isSpacePressed = false
         viewModel.endMovingSelection()
+        if let cursorPoint = viewModel.cursorPoint {
+            viewModel.rebaseResizing(at: cursorPoint, modifiers: resizeModifiers)
+        }
         needsDisplay = true
     }
 
@@ -758,9 +938,13 @@ private final class RegionSelectionView: NSView {
         }
 
         let previousCurrentPoint = viewModel.currentPoint
+        resizeModifiers = RegionResizeModifiers(eventFlags: event.modifierFlags)
         let didAdjust = isSpacePressed
             ? viewModel.nudgeSelection(by: delta)
-            : viewModel.nudgeActiveCorner(by: delta)
+            : viewModel.nudgeActiveCorner(
+                by: delta,
+                fromCenter: resizeModifiers.contains(.fromCenter)
+            )
         guard didAdjust,
               let previousCurrentPoint,
               let currentPoint = viewModel.currentPoint
@@ -770,6 +954,7 @@ private final class RegionSelectionView: NSView {
 
         keyboardPointerOffset.dx += currentPoint.x - previousCurrentPoint.x
         keyboardPointerOffset.dy += currentPoint.y - previousCurrentPoint.y
+        viewModel.rebaseResizing(at: currentPoint, modifiers: resizeModifiers)
         needsDisplay = true
     }
 
