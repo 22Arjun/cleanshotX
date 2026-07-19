@@ -57,7 +57,15 @@ final class ScrollingCaptureCoordinator {
         }
 
         let captureID = UUID()
-        let worker = ScrollingCaptureWorker(configuration: configuration)
+        let worker = ScrollingCaptureWorker(
+            configuration: configuration,
+            previewPublication: { [weak self] image in
+                Task { @MainActor [weak self] in
+                    guard self?.activeCaptureID == captureID else { return }
+                    self?.hudViewModel?.updatePreview(image)
+                }
+            }
+        )
         let hudViewModel = ScrollingCaptureHUDViewModel(
             finish: { [weak self] in self?.finish() },
             cancel: { [weak self] in self?.cancel() },
@@ -178,9 +186,6 @@ final class ScrollingCaptureCoordinator {
                 consecutiveRejections: &consecutiveRejections
             )
             hudViewModel?.update(hudState)
-            if let previewImage = update.previewImage {
-                hudViewModel?.updatePreview(previewImage)
-            }
 
             if case .reachedOutputLimit = decision {
                 finalize(captureID: captureID, stopSource: true, fallbackError: nil)
@@ -302,15 +307,19 @@ final class ScrollingCaptureCoordinator {
 private nonisolated final class ScrollingCaptureWorker: @unchecked Sendable {
     private let lock = NSLock()
     private let session: ScrollingCaptureSession
-    private let previewBuilder: ScrollingCapturePreviewBuilder
+    private let previewPipeline: ScrollingCapturePreviewPipeline
     private var isActive = true
     private var isPaused = false
     private var needsRebase = false
 
-    init(configuration: ScrollingCaptureConfiguration) {
+    init(
+        configuration: ScrollingCaptureConfiguration,
+        previewPublication: @escaping ScrollingCapturePreviewPipeline.Publication
+    ) {
         session = ScrollingCaptureSession(configuration: configuration)
-        previewBuilder = ScrollingCapturePreviewBuilder(
-            contentInsets: configuration.contentInsets
+        previewPipeline = ScrollingCapturePreviewPipeline(
+            contentInsets: configuration.contentInsets,
+            publication: previewPublication
         )
     }
 
@@ -318,9 +327,13 @@ private nonisolated final class ScrollingCaptureWorker: @unchecked Sendable {
         _ image: CGImage
     ) -> Result<ScrollingCaptureWorkerUpdate, Error>? {
         lock.lock()
-        defer { lock.unlock() }
-        guard isActive, !isPaused else { return nil }
-        return Result {
+        guard isActive, !isPaused else {
+            lock.unlock()
+            return nil
+        }
+
+        let result: Result<ScrollingCaptureWorkerUpdate, Error>
+        do {
             let decision: ScrollingCaptureFrameDecision
             if needsRebase {
                 decision = try session.rebase(image)
@@ -328,11 +341,18 @@ private nonisolated final class ScrollingCaptureWorker: @unchecked Sendable {
             } else {
                 decision = try session.ingest(image)
             }
-            return ScrollingCaptureWorkerUpdate(
-                decision: decision,
-                previewImage: previewBuilder.apply(frame: image, decision: decision)
-            )
+            result = .success(ScrollingCaptureWorkerUpdate(decision: decision))
+        } catch {
+            result = .failure(error)
         }
+        lock.unlock()
+
+        // Preview work owns a separate lock and serial queue. Even its bounded
+        // enqueue bookkeeping stays outside the native session's critical section.
+        if case let .success(update) = result {
+            previewPipeline.submit(frame: image, decision: update.decision)
+        }
+        return result
     }
 
     func finish() throws -> CGImage {
@@ -340,12 +360,14 @@ private nonisolated final class ScrollingCaptureWorker: @unchecked Sendable {
         defer { lock.unlock() }
         guard isActive else { throw ScrollingCaptureError.noFrames }
         isActive = false
+        previewPipeline.stop()
         return try session.finish()
     }
 
     func cancel() {
         lock.lock()
         isActive = false
+        previewPipeline.stop()
         lock.unlock()
     }
 
@@ -369,5 +391,4 @@ private nonisolated final class ScrollingCaptureWorker: @unchecked Sendable {
 
 private nonisolated struct ScrollingCaptureWorkerUpdate: Sendable {
     let decision: ScrollingCaptureFrameDecision
-    let previewImage: CGImage?
 }

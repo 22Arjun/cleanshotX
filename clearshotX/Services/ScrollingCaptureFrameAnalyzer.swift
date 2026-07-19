@@ -148,6 +148,16 @@ nonisolated final class ScrollingCaptureFrameAnalyzer {
             samplingStride: 2
         )
 
+        // A frame that already satisfies the strict duplicate threshold cannot
+        // contribute new document rows. Return before the bidirectional shift
+        // search: stopped scrolling otherwise performs the most expensive work
+        // in the pipeline 30 times per second for no visual benefit. This does
+        // not relax the stationary-repaint heuristic below; only frames that the
+        // existing duplicate gate already accepted take this fast path.
+        if stationary.value <= configuration.duplicateDifferenceThreshold {
+            return .duplicate(difference: stationary.value)
+        }
+
         let forwardCandidates = alignmentCandidates(
             previous: previousPlane,
             current: currentPlane,
@@ -163,8 +173,7 @@ nonisolated final class ScrollingCaptureFrameAnalyzer {
 
         let stationaryClearlyWins = stationary.value <= configuration.stationaryDifferenceThreshold
             && stationary.value <= best.score.value * 0.82
-        if stationary.value <= configuration.duplicateDifferenceThreshold
-            || stationaryClearlyWins {
+        if stationaryClearlyWins {
             return .duplicate(difference: stationary.value)
         }
 
@@ -397,8 +406,9 @@ nonisolated final class ScrollingCaptureFrameAnalyzer {
         let stride = max(1, samplingStride)
         let bandCount = 6
         var bands = Array(repeating: RegistrationBand(), count: bandCount)
-        var totalLumaDifference = 0.0
-        var totalFeatureDifference = 0.0
+        var totalLumaDelta: Int64 = 0
+        var totalFeatureLumaDelta: Int64 = 0
+        var totalFeatureGradientDelta: Int64 = 0
         var texturedSampleCount = 0
         var sampleCount = 0
 
@@ -408,36 +418,32 @@ nonisolated final class ScrollingCaptureFrameAnalyzer {
             let currentRow = currentStartRow + row
             let previousBase = previousRow * previous.width
             let currentBase = currentRow * current.width
-            let previousPriorBase = (previousRow - 1) * previous.width
-            let currentPriorBase = (currentRow - 1) * current.width
             let bandIndex = min(bandCount - 1, row * bandCount / rowCount)
 
             var column = max(startColumn + 1, 1)
             while column < endColumn {
                 let previousValue = Int(previous.pixels[previousBase + column])
                 let currentValue = Int(current.pixels[currentBase + column])
-                let lumaDifference = Double(abs(previousValue - currentValue)) / 255
-                let previousGradient = min(
-                    255,
-                    abs(previousValue - Int(previous.pixels[previousPriorBase + column]))
-                        + abs(previousValue - Int(previous.pixels[previousBase + column - 1]))
-                )
-                let currentGradient = min(
-                    255,
-                    abs(currentValue - Int(current.pixels[currentPriorBase + column]))
-                        + abs(currentValue - Int(current.pixels[currentBase + column - 1]))
-                )
+                let lumaDelta = abs(previousValue - currentValue)
+                // Edge magnitude is immutable for a luma plane. Computing it
+                // once during plane creation avoids four extra pixel reads and
+                // several integer operations for every sample of every shift.
+                // The stored value is bit-for-bit the same capped gradient used
+                // by the original scorer, so registration decisions are unchanged.
+                let previousGradient = Int(previous.gradients[previousBase + column])
+                let currentGradient = Int(current.gradients[currentBase + column])
                 let isTextured = max(previousGradient, currentGradient) >= 12
 
-                totalLumaDifference += lumaDifference
-                bands[bandIndex].lumaDifference += lumaDifference
+                totalLumaDelta += Int64(lumaDelta)
+                bands[bandIndex].lumaDelta += Int64(lumaDelta)
                 bands[bandIndex].sampleCount += 1
                 if isTextured {
-                    let gradientDifference = Double(abs(previousGradient - currentGradient)) / 255
-                    let featureDifference = lumaDifference * 0.55 + gradientDifference * 0.45
-                    totalFeatureDifference += featureDifference
+                    let gradientDelta = abs(previousGradient - currentGradient)
+                    totalFeatureLumaDelta += Int64(lumaDelta)
+                    totalFeatureGradientDelta += Int64(gradientDelta)
                     texturedSampleCount += 1
-                    bands[bandIndex].featureDifference += featureDifference
+                    bands[bandIndex].featureLumaDelta += Int64(lumaDelta)
+                    bands[bandIndex].featureGradientDelta += Int64(gradientDelta)
                     bands[bandIndex].texturedSampleCount += 1
                 }
                 sampleCount += 1
@@ -455,16 +461,23 @@ nonisolated final class ScrollingCaptureFrameAnalyzer {
             )
         }
 
-        let meanLuma = totalLumaDifference / Double(sampleCount)
+        // Accumulate byte deltas in the inner loop and normalize once. This is
+        // algebraically the same 0...1 metric, but avoids millions of Double
+        // conversions and divisions during a fast scrolling session.
+        let meanLuma = Double(totalLumaDelta) / Double(sampleCount * 255)
         let meanFeature = texturedSampleCount > 0
-            ? totalFeatureDifference / Double(texturedSampleCount)
+            ? (Double(totalFeatureLumaDelta) * 0.55
+                + Double(totalFeatureGradientDelta) * 0.45)
+                / Double(texturedSampleCount * 255)
             : meanLuma
         let informativeBands = bands.filter {
             $0.texturedSampleCount >= max(4, $0.sampleCount / 200)
         }
         let bandValues = informativeBands.map { band -> Double in
-            let luma = band.lumaDifference / Double(max(1, band.sampleCount))
-            let feature = band.featureDifference / Double(max(1, band.texturedSampleCount))
+            let luma = Double(band.lumaDelta) / Double(max(1, band.sampleCount) * 255)
+            let feature = (Double(band.featureLumaDelta) * 0.55
+                + Double(band.featureGradientDelta) * 0.45)
+                / Double(max(1, band.texturedSampleCount) * 255)
             return luma * 0.35 + feature * 0.65
         }
         let sortedBandValues = bandValues.sorted()
@@ -505,8 +518,9 @@ nonisolated final class ScrollingCaptureFrameAnalyzer {
 }
 
 private nonisolated struct RegistrationBand {
-    var lumaDifference = 0.0
-    var featureDifference = 0.0
+    var lumaDelta: Int64 = 0
+    var featureLumaDelta: Int64 = 0
+    var featureGradientDelta: Int64 = 0
     var sampleCount = 0
     var texturedSampleCount = 0
 }
@@ -516,6 +530,7 @@ private nonisolated struct LumaPlane {
     let height: Int
     let verticalScale: Double
     let pixels: [UInt8]
+    let gradients: [UInt8]
 
     init?(image: CGImage, maximumWidth: Int, maximumHeight: Int) {
         guard image.width > 0,
@@ -557,9 +572,36 @@ private nonisolated struct LumaPlane {
             return true
         }
         guard didDraw else { return nil }
+
+        // Precompute the exact vertical-plus-horizontal edge magnitude consumed
+        // by every alignment hypothesis. The plane is bounded by configuration
+        // (256 x 640 by default), so this adds at most 160 KiB and one linear pass
+        // while eliminating repeated gradient construction from the O(shifts)
+        // registration loop.
+        var gradientStorage = [UInt8](repeating: 0, count: storage.count)
+        if sampledWidth > 1, sampledHeight > 1 {
+            storage.withUnsafeBufferPointer { source in
+                gradientStorage.withUnsafeMutableBufferPointer { destination in
+                    for row in 1..<sampledHeight {
+                        let base = row * sampledWidth
+                        let priorBase = base - sampledWidth
+                        for column in 1..<sampledWidth {
+                            let value = Int(source[base + column])
+                            let magnitude = min(
+                                255,
+                                abs(value - Int(source[priorBase + column]))
+                                    + abs(value - Int(source[base + column - 1]))
+                            )
+                            destination[base + column] = UInt8(magnitude)
+                        }
+                    }
+                }
+            }
+        }
         width = sampledWidth
         height = sampledHeight
         verticalScale = Double(sampledHeight) / Double(image.height)
         pixels = storage
+        gradients = gradientStorage
     }
 }

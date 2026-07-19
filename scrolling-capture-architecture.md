@@ -40,7 +40,7 @@ The product target is therefore behavioral parity where it is valuable—explici
 Region selection
       │
       ▼
-SCStream (15 fps, queueDepth 3, BGRA, cursor hidden)
+SCStream (30 fps, queueDepth 3, native BGRA, cursor hidden)
       │ complete frames + metadata
       ▼
 Frame gate
@@ -50,7 +50,7 @@ Frame gate
   └─ candidate frame
       │
       ▼
-Luma downsample (bounded to 192×320)
+Luma + cached-gradient plane (bounded to 256×640)
       │
       ▼
 Vertical registration
@@ -84,15 +84,15 @@ One final Core Graphics render → CaptureStore → Quick Access
 
 `ScrollingCaptureRegionSelectionManager` is intentionally separate from ordinary Region Capture. Mouse-up preserves the selection instead of committing it; eight resize targets, whole-frame movement, keyboard nudging, native-pixel dimensions, and explicit Start/Cancel controls remain available until confirmation. The target app is restored to the foreground before streaming begins, and the locked selection overlay overlaps handoff to the live capture UI so the frame never flashes away.
 
-`ScrollingCaptureHUDManager` presents an app-excluded, non-activating experience around the selected region: the crop frame remains visible, the desktop outside it stays dimmed, a narrow live-result sidecar grows independently, and compact Cancel/Pause/Done controls remain anchored to the selection. None of these surfaces enter the ScreenCaptureKit stream or take scrolling focus from the target app.
+`ScrollingCaptureHUDManager` presents an app-excluded, non-activating experience around the selected region: the crop frame remains visible, the desktop outside it stays dimmed, a transparent page-only miniature grows independently, and compact Cancel/Pause/Done controls remain anchored to the selection. The miniature has no card, border, status labels, dimensions, frame count, or placeholder; its panel tracks the bitmap aspect ratio, stays top-anchored, and animates as the accepted document grows. None of these surfaces enter the ScreenCaptureKit stream or take scrolling focus from the target app.
 
 `ScrollingCapturePreviewBuilder` incrementally updates a downsampled representation only when the compositor accepts new rows. Its decoded size is permanently capped at 240×280 pixels, so live feedback does not retain or repeatedly render the full-resolution output and duplicate/rejected frames do not trigger redundant UI work. Preview resolution is therefore independent from output resolution: accepted strips are always cropped and composed from native ScreenCaptureKit frames without rescaling.
 
-`ScrollingCaptureFrameAnalyzer` caches the accepted reference as a small coarse plane. Each incoming frame is downsampled once for broad registration and an accepted candidate is promoted without reconverting the previous native frame. A second continuity plane reduces horizontal detail only and preserves every physical vertical row; its dense search is limited to a narrow neighborhood. The compositor still receives the untouched native image, reducing analysis work without trading away output detail.
+`ScrollingCaptureFrameAnalyzer` caches the accepted reference as a small coarse plane. Each incoming frame is downsampled once for broad registration, its gradient plane is computed once, and an accepted candidate is promoted without reconverting the previous native frame. Exact duplicates exit before bidirectional shift search. A second continuity plane reduces horizontal detail only and preserves every physical vertical row; its dense search is limited to a narrow neighborhood and recovery reuses the candidate plane when checking for a settled repaint. The compositor still receives the untouched native image, reducing analysis work without trading away output detail.
 
-The compositor keeps the initial viewport body plus only newly revealed native strips. New rows remain in a bounded deferred tail until another aligned or settled frame confirms them; later overlap supplies cleaner pixels before the strip becomes immutable. Automatic boundary analysis detects sticky headers and footers, retains the header once, and replaces the footer from the final settled frame. An uncertain one-frame tail is omitted rather than saving a corrupt seam.
+The compositor keeps the initial viewport body plus only newly revealed native strips. New rows remain in a bounded deferred tail until another aligned or settled frame confirms them; later overlap supplies cleaner pixels before the strip becomes immutable. Automatic boundary analysis detects sticky headers and footers, including bars with bounded blank padding, retains the header once, and replaces the footer from the final settled frame. If a sticky inset becomes provable while only the initial viewport and a speculative tail exist, both are recropped consistently before any moving rows become immutable. An uncertain one-frame tail is omitted rather than saving a corrupt seam.
 
-Regression tests cover exact displacement, repeated frames while stopped, resumed scrolling, variable fast offsets, ambiguous periodic rows, local late-loading changes, reverse jitter, no-overlap gaps, configured and automatically detected fixed bands, image-heavy seams, and 1500-pixel-tall Retina alignment using deterministic pixel-for-pixel comparisons.
+Regression tests cover exact displacement, repeated frames while stopped, resumed scrolling, alternating 17–117-pixel offsets, padded sticky navigation, headings and thin text crossing seams, local late-loading changes, ambiguous periodic rows, reverse jitter, no-overlap gaps, image-heavy seams, and 1500-pixel-tall Retina alignment using deterministic pixel-for-pixel comparisons.
 
 ## Next implementation slices
 

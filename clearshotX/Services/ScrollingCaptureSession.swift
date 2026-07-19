@@ -90,7 +90,7 @@ nonisolated final class ScrollingCaptureSession {
             // A browser can repaint images, fonts, or animations while the scroll
             // position is unchanged. Such a frame is not a new document strip, but
             // it is a better source for pixels that have not been committed yet.
-            if continuityValidator.candidateIsStationary(frame) {
+            if continuityValidator.preparedCandidateIsStationary() {
                 try compositor?.refreshDeferredPixels(from: frame)
             }
             continuityValidator.discardCandidate()
@@ -219,8 +219,15 @@ private nonisolated final class ScrollingCaptureContinuityValidator {
     /// either small forward or reverse movement. This permits a settled browser
     /// repaint to refresh deferred pixels without advancing the document position.
     func candidateIsStationary(_ image: CGImage) -> Bool {
-        guard prepareCandidate(image),
-              let referencePlane,
+        guard prepareCandidate(image) else { return false }
+        return preparedCandidateIsStationary()
+    }
+
+    /// Evaluates the candidate already prepared by `recover(candidate:)`.
+    /// Reusing it avoids rebuilding a full-height luma plane on the expensive
+    /// recovery path when the frame turns out to be a settled repaint.
+    func preparedCandidateIsStationary() -> Bool {
+        guard let referencePlane,
               let candidatePlane,
               let content = contentRows(in: referencePlane)
         else {
@@ -540,8 +547,18 @@ private nonisolated final class ScrollingCaptureContinuityValidator {
         )
         let separation = max(0.010, stableThreshold * 1.6)
 
+        // Fixed bars commonly begin/end with several rows of plain padding. Those
+        // rows are stable at zero motion but can look just like the page's white
+        // background under the moving hypothesis, so they are neutral rather than
+        // negative evidence. Search through a bounded padding gap and require a
+        // cluster of discriminating rows near the viewport boundary.
+        let maximumPaddingGap = max(8, min(24, previous.height / 24))
+        let maximumLeadingPadding = max(8, min(32, previous.height / 32))
+
+        var topFirstEvidence = -1
         var topLastEvidence = -1
-        var misses = 0
+        var topEvidenceCount = 0
+        var rowsSinceTopEvidence = 0
         for row in 0..<maximumBand {
             let zero = rowDifference(
                 previous: previous,
@@ -559,16 +576,20 @@ private nonisolated final class ScrollingCaptureContinuityValidator {
                 )
                 : 1
             if zero <= stableThreshold, moving >= zero + separation {
+                if topFirstEvidence < 0 { topFirstEvidence = row }
                 topLastEvidence = row
-                misses = 0
-            } else {
-                misses += 1
-                if misses > 2 { break }
+                topEvidenceCount += 1
+                rowsSinceTopEvidence = 0
+            } else if topFirstEvidence >= 0 {
+                rowsSinceTopEvidence += 1
+                if rowsSinceTopEvidence > maximumPaddingGap { break }
             }
         }
 
+        var bottomLastEvidence = previous.height
         var bottomFirstEvidence = previous.height
-        misses = 0
+        var bottomEvidenceCount = 0
+        var rowsSinceBottomEvidence = 0
         let bottomLimit = max(0, previous.height - maximumBand)
         if previous.height > 0 {
             for row in stride(from: previous.height - 1, through: bottomLimit, by: -1) {
@@ -588,17 +609,23 @@ private nonisolated final class ScrollingCaptureContinuityValidator {
                     )
                     : 1
                 if zero <= stableThreshold, alternative >= zero + separation {
+                    if bottomLastEvidence == previous.height { bottomLastEvidence = row }
                     bottomFirstEvidence = row
-                    misses = 0
-                } else {
-                    misses += 1
-                    if misses > 2 { break }
+                    bottomEvidenceCount += 1
+                    rowsSinceBottomEvidence = 0
+                } else if bottomLastEvidence < previous.height {
+                    rowsSinceBottomEvidence += 1
+                    if rowsSinceBottomEvidence > maximumPaddingGap { break }
                 }
             }
         }
 
-        let sampledTop = topLastEvidence >= 3 ? topLastEvidence + 1 : 0
-        let sampledBottom = previous.height - bottomFirstEvidence >= 4
+        let hasReliableTopCluster = topEvidenceCount >= 4
+            && topFirstEvidence <= maximumLeadingPadding
+        let hasReliableBottomCluster = bottomEvidenceCount >= 4
+            && previous.height - 1 - bottomLastEvidence <= maximumLeadingPadding
+        let sampledTop = hasReliableTopCluster ? topLastEvidence + 1 : 0
+        let sampledBottom = hasReliableBottomCluster
             ? previous.height - bottomFirstEvidence
             : 0
         let scale = max(previous.verticalScale, 0.000_001)
@@ -842,22 +869,32 @@ private nonisolated final class ScrollingCaptureCompositor {
         )
     }
 
-    /// Applies automatically detected sticky chrome before the first moving strip
-    /// is staged. The first frame is recropped so the header remains exactly once
-    /// and the footer can be replaced by the final settled viewport.
+    /// Applies automatically detected sticky chrome while moving pixels are still
+    /// speculative. Detection may need two aligned deliveries (for example, a
+    /// navbar that becomes sticky only after the first scroll), so a deferred tail
+    /// is allowed here. No moving strip may already be irreversible.
+    ///
+    /// The pending tail stores a source frame rather than a crop. Updating the
+    /// insets before it is committed therefore makes its eventual source range use
+    /// the new moving-content boundary and prevents fixed chrome from entering the
+    /// document. If that tail is taller than the newly discovered content area,
+    /// continuity was never observable; fail closed rather than manufacture rows.
     func updateContentInsets(
         _ detected: ScrollingCaptureContentInsets,
         latestFrame: CGImage
     ) throws {
-        guard segments.count == 1, deferredTail == nil else { return }
         let resolved = ScrollingCaptureContentInsets(
             top: max(contentInsets.top, detected.top),
             bottom: max(contentInsets.bottom, detected.bottom)
         )
-        guard resolved != contentInsets,
-              resolved.top + resolved.bottom < frameHeight,
+        guard resolved != contentInsets else { return }
+
+        let resolvedMovingHeight = frameHeight - resolved.top - resolved.bottom
+        guard segments.count == 1,
+              resolvedMovingHeight > 0,
+              deferredTail.map({ $0.height <= resolvedMovingHeight }) ?? true,
               let firstFrame = segments.first?.image,
-              firstFrame.height == frameHeight,
+              firstFrame.height >= frameHeight - resolved.bottom,
               let firstBody = Self.copying(
                 image: firstFrame,
                 topLeftPixelRect: CGRect(
@@ -866,9 +903,8 @@ private nonisolated final class ScrollingCaptureCompositor {
                     width: outputWidth,
                     height: frameHeight - resolved.bottom
                 )
-              )
-        else {
-            return
+              ) else {
+            throw ScrollingCaptureError.imageCreationFailed
         }
         contentInsets = resolved
         segments[0] = Segment(image: firstBody)

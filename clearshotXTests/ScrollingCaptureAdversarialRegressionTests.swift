@@ -330,6 +330,161 @@ final class ScrollingCaptureAdversarialRegressionTests: XCTestCase {
             message: "Coarse registration rounding cut or repeated native Retina rows."
         )
     }
+
+    func testStickyNavigationCannotBeInsertedBelowHeadingAcrossStopAndResume() throws {
+        let document = adversarialScreenshotLikeDocument(width: 168, height: 1_180)
+        let viewportHeight = 260
+        let headerHeight = 30
+        let offsets = [0, 43, 97, 133, 194, 252, 331, 379, 463, 526, 611]
+        let stopOffsets: Set<Int> = [133, 379]
+        let session = ScrollingCaptureSession(configuration: adversarialConfiguration())
+
+        for offset in offsets {
+            let frame = adversarialScreenshotLikeStickyViewport(
+                document: document,
+                documentOffset: offset,
+                viewportHeight: viewportHeight,
+                headerHeight: headerHeight
+            )
+            let decision = try session.ingest(frame)
+            if case .rejected = decision {
+                return XCTFail("Page-like sticky viewport was rejected at document offset \(offset): \(decision)")
+            }
+
+            if stopOffsets.contains(offset) {
+                // Deliver enough settled frames to cross both the analyzer's
+                // stationary path and the compositor's deferred-tail boundary.
+                for _ in 0..<10 {
+                    guard case .duplicate = try session.ingest(frame) else {
+                        return XCTFail("A stopped viewport at offset \(offset) did not remain stationary.")
+                    }
+                }
+            }
+        }
+
+        let finalFrame = adversarialScreenshotLikeStickyViewport(
+            document: document,
+            documentOffset: try XCTUnwrap(offsets.last),
+            viewportHeight: viewportHeight,
+            headerHeight: headerHeight
+        )
+        _ = try session.ingest(finalFrame)
+
+        let output = try session.finish()
+        let expected = adversarialExpectedScreenshotLikeStickyCapture(
+            document: document,
+            finalDocumentOffset: try XCTUnwrap(offsets.last),
+            viewportHeight: viewportHeight,
+            headerHeight: headerHeight
+        )
+        assertPixelEquivalent(
+            output,
+            expected,
+            message: "The fixed navigation was inserted into the document immediately below a heading after stop/resume."
+        )
+        assertStickyHeaderOccursOnlyAtTop(
+            output,
+            headerHeight: headerHeight,
+            message: "The fixed navigation signature occurs inside captured page content."
+        )
+    }
+
+    func testChangingScrollDeltasAroundSettledFramesPreserveEveryNativeRow() throws {
+        let document = adversarialScreenshotLikeDocument(width: 176, height: 1_360)
+        let viewportHeight = 274
+        let headerHeight = 32
+        // Alternating tiny and fast deltas exercise deferred-tail accumulation,
+        // forced commits, and a new tail immediately after a settled delivery.
+        let offsets = [0, 17, 83, 111, 207, 244, 349, 372, 489, 531, 648, 671, 793]
+        let session = ScrollingCaptureSession(configuration: adversarialConfiguration())
+
+        for (index, offset) in offsets.enumerated() {
+            let frame = adversarialScreenshotLikeStickyViewport(
+                document: document,
+                documentOffset: offset,
+                viewportHeight: viewportHeight,
+                headerHeight: headerHeight
+            )
+            let decision = try session.ingest(frame)
+            switch (index, decision) {
+            case (0, .started), (_, .appended):
+                break
+            default:
+                return XCTFail("Variable-delta frame at \(offset) was not appended: \(decision)")
+            }
+
+            if index == 4 || index == 8 {
+                guard case .duplicate = try session.ingest(frame) else {
+                    return XCTFail("Settled frame at \(offset) was not classified as duplicate.")
+                }
+            }
+        }
+
+        let lastFrame = adversarialScreenshotLikeStickyViewport(
+            document: document,
+            documentOffset: try XCTUnwrap(offsets.last),
+            viewportHeight: viewportHeight,
+            headerHeight: headerHeight
+        )
+        _ = try session.ingest(lastFrame)
+
+        let output = try session.finish()
+        let expected = adversarialExpectedScreenshotLikeStickyCapture(
+            document: document,
+            finalDocumentOffset: try XCTUnwrap(offsets.last),
+            viewportHeight: viewportHeight,
+            headerHeight: headerHeight
+        )
+        assertPixelEquivalent(
+            output,
+            expected,
+            message: "Changing scroll velocity cut, repeated, or substituted native rows."
+        )
+    }
+
+    func testTextAndImageRowsCrossingStickyDeferredSeamsRemainPixelExact() throws {
+        let document = adversarialScreenshotLikeDocument(width: 184, height: 1_420)
+        let viewportHeight = 288
+        let headerHeight = 34
+        // These document positions put deferred boundaries through the fixture's
+        // heading glyphs, thin text strokes, and high-frequency image blocks.
+        let offsets = [0, 49, 124, 181, 267, 341, 431, 506, 593, 688, 776, 891]
+        let session = ScrollingCaptureSession(configuration: adversarialConfiguration())
+
+        for offset in offsets {
+            let frame = adversarialScreenshotLikeStickyViewport(
+                document: document,
+                documentOffset: offset,
+                viewportHeight: viewportHeight,
+                headerHeight: headerHeight
+            )
+            let decision = try session.ingest(frame)
+            if case .rejected = decision {
+                return XCTFail("A text/image seam frame was rejected at offset \(offset): \(decision)")
+            }
+        }
+
+        let settled = adversarialScreenshotLikeStickyViewport(
+            document: document,
+            documentOffset: try XCTUnwrap(offsets.last),
+            viewportHeight: viewportHeight,
+            headerHeight: headerHeight
+        )
+        _ = try session.ingest(settled)
+
+        let output = try session.finish()
+        let expected = adversarialExpectedScreenshotLikeStickyCapture(
+            document: document,
+            finalDocumentOffset: try XCTUnwrap(offsets.last),
+            viewportHeight: viewportHeight,
+            headerHeight: headerHeight
+        )
+        assertPixelEquivalent(
+            output,
+            expected,
+            message: "Thin text strokes or image scanlines were damaged where a deferred seam crossed them."
+        )
+    }
 }
 
 private func adversarialConfiguration() -> ScrollingCaptureConfiguration {
@@ -386,6 +541,114 @@ private func adversarialImageHeavyDocument(width: Int, height: Int) -> CGImage {
         }
         return UInt8(242 + Int(adversarialNoise(x: x, y: y, seed: 0xFA6E) % 11))
     }
+}
+
+/// A sparse, white webpage fixture modeled after the uploaded failure: large
+/// headings, thin text, broad empty gaps, and image panels. The small per-row
+/// watermark makes every native row unique without visually dominating matching.
+private func adversarialScreenshotLikeDocument(width: Int, height: Int) -> CGImage {
+    adversarialImage(width: width, height: height) { x, y in
+        let sectionY = y % 236
+        let section = y / 236
+        let watermark = Int(adversarialNoise(x: x / 7, y: y, seed: 0x5EA1_CAFE) % 3)
+
+        // Bold section heading, including a Tools-like heading at each boundary.
+        if (18..<29).contains(sectionY), x > 8, x < min(width - 8, 68 + section * 5) {
+            return UInt8(18 + (x + y) % 14)
+        }
+        // Several one-to-three-pixel text strokes on a mostly white background.
+        if [49, 50, 64, 79, 80, 95].contains(sectionY),
+           x > 9,
+           x < width - 18 - ((sectionY + section * 11) % 39) {
+            return UInt8(54 + (x * 3 + sectionY) % 48)
+        }
+        // A large high-frequency screenshot/image panel that spans many seams.
+        if (112..<207).contains(sectionY), x > 11, x < width - 31 {
+            let tile = ((x / 9) + (y / 8)) % 2
+            let texture = Int(adversarialNoise(x: x * 5, y: y * 3, seed: UInt64(section + 71)) % 52)
+            return UInt8(tile == 0 ? 24 + texture : 171 + texture)
+        }
+        return UInt8(252 - watermark)
+    }
+}
+
+private func adversarialScreenshotLikeStickyViewport(
+    document: CGImage,
+    documentOffset: Int,
+    viewportHeight: Int,
+    headerHeight: Int
+) -> CGImage {
+    let pixels = adversarialGrayscalePixels(document)
+    return adversarialImage(width: document.width, height: viewportHeight) { x, y in
+        if y < headerHeight {
+            // A distinctive logo/navigation row like the header visibly duplicated
+            // below “Tools” in the supplied capture.
+            if y < 3 { return 245 }
+            if (6..<22).contains(y), (6..<22).contains(x) { return UInt8(24 + (x + y) % 37) }
+            if (9..<13).contains(y), x > 34, x < document.width - 8 {
+                return UInt8((x / 17).isMultiple(of: 2) ? 68 : 226)
+            }
+            if y == headerHeight - 1 { return 204 }
+            return 249
+        }
+        let sourceY = documentOffset + y - headerHeight
+        return pixels[sourceY * document.width + x]
+    }
+}
+
+private func adversarialExpectedScreenshotLikeStickyCapture(
+    document: CGImage,
+    finalDocumentOffset: Int,
+    viewportHeight: Int,
+    headerHeight: Int
+) -> CGImage {
+    let bodyHeight = viewportHeight - headerHeight
+    let height = headerHeight + bodyHeight + finalDocumentOffset
+    let documentPixels = adversarialGrayscalePixels(document)
+    return adversarialImage(width: document.width, height: height) { x, y in
+        if y < headerHeight {
+            if y < 3 { return 245 }
+            if (6..<22).contains(y), (6..<22).contains(x) { return UInt8(24 + (x + y) % 37) }
+            if (9..<13).contains(y), x > 34, x < document.width - 8 {
+                return UInt8((x / 17).isMultiple(of: 2) ? 68 : 226)
+            }
+            if y == headerHeight - 1 { return 204 }
+            return 249
+        }
+        return documentPixels[(y - headerHeight) * document.width + x]
+    }
+}
+
+private func assertStickyHeaderOccursOnlyAtTop(
+    _ image: CGImage,
+    headerHeight: Int,
+    message: String,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    let pixels = adversarialGrayscalePixels(image)
+    guard image.width > 50, image.height > headerHeight * 2 else { return }
+    let signatureX = 40
+    let signatureRows = 9..<13
+    let expected = signatureRows.map { pixels[$0 * image.width + signatureX] }
+    var repeatedAt: Int?
+
+    for candidateTop in headerHeight..<(image.height - headerHeight) {
+        var matches = true
+        for (index, row) in signatureRows.enumerated() {
+            let value = pixels[(candidateTop + row) * image.width + signatureX]
+            if abs(Int(value) - Int(expected[index])) > 1 {
+                matches = false
+                break
+            }
+        }
+        if matches {
+            repeatedAt = candidateTop
+            break
+        }
+    }
+
+    XCTAssertNil(repeatedAt, "\(message) Repeated header begins at output row \(repeatedAt ?? -1).", file: file, line: line)
 }
 
 private func adversarialPeriodicDocument(width: Int, height: Int, period: Int) -> CGImage {
@@ -551,18 +814,35 @@ private func assertPixelEquivalent(
     let expectedPixels = adversarialGrayscalePixels(expected)
     var differingPixelCount = 0
     var largestDifference = 0
-    for (actualPixel, expectedPixel) in zip(actualPixels, expectedPixels) {
+    var minimumX = actual.width
+    var maximumX = -1
+    var minimumY = actual.height
+    var maximumY = -1
+    var differingRows: Set<Int> = []
+    for (pixelIndex, pair) in zip(actualPixels, expectedPixels).enumerated() {
+        let (actualPixel, expectedPixel) = pair
         let difference = abs(Int(actualPixel) - Int(expectedPixel))
         if difference > 1 {
             differingPixelCount += 1
             largestDifference = max(largestDifference, difference)
+            let x = pixelIndex % actual.width
+            let y = pixelIndex / actual.width
+            minimumX = min(minimumX, x)
+            maximumX = max(maximumX, x)
+            minimumY = min(minimumY, y)
+            maximumY = max(maximumY, y)
+            differingRows.insert(y)
         }
     }
+
+    let boundsDescription = differingPixelCount == 0
+        ? "none"
+        : "x=\(minimumX)...\(maximumX), y=\(minimumY)...\(maximumY), across \(differingRows.count) rows"
 
     XCTAssertEqual(
         differingPixelCount,
         0,
-        "\(message) \(differingPixelCount) pixels differ; maximum luma error \(largestDifference).",
+        "\(message) \(differingPixelCount) pixels differ; maximum luma error \(largestDifference); bounds \(boundsDescription).",
         file: file,
         line: line
     )

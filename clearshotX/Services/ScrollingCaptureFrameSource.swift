@@ -100,6 +100,10 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
             configuration.showsCursor = false
             configuration.scalesToFit = false
             configuration.captureResolution = .best
+            // A display-composited capture is visually opaque. Declaring that
+            // invariant lets ScreenCaptureKit avoid preserving an alpha channel
+            // through its compositor without changing any captured RGB pixels.
+            configuration.shouldBeOpaque = true
 
             let stream = SCStream(
                 filter: filter,
@@ -150,6 +154,15 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
     }
 
     private func process(_ queuedFrame: QueuedFrame) {
+        // LatestValueProcessor deliberately drains continuously while frames keep
+        // arriving. Give every frame its own autorelease boundary so temporary
+        // Core Image/Core Media wrappers cannot accumulate for the entire scroll.
+        autoreleasepool {
+            processWithinAutoreleasePool(queuedFrame)
+        }
+    }
+
+    private func processWithinAutoreleasePool(_ queuedFrame: QueuedFrame) {
         let sampleBuffer = queuedFrame.sampleBuffer
         guard let attachment = sampleBuffer.frameAttachment,
               let statusRawValue = attachment[SCStreamFrameInfo.status] as? Int,

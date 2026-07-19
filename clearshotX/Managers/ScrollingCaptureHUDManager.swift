@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
@@ -16,17 +17,18 @@ protocol ScrollingCaptureHUDPresenting: AnyObject {
 }
 
 /// Presents the active capture as one continuous experience: a persistent crop
-/// frame, a narrow live-result strip, and compact controls anchored to the crop.
+/// frame, a chrome-free page miniature, and compact controls anchored to the crop.
 /// All app-owned windows are excluded by the ScreenCaptureKit content filter.
 @MainActor
 final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
-    private let previewWidth: CGFloat = 232
+    private let previewMaximumSize = NSSize(width: 232, height: 420)
     private let controlsSize = NSSize(width: 276, height: 54)
     private let edgeMargin: CGFloat = 12
 
     private var frameWindows: [ScrollingCaptureFrameWindow] = []
     private var previewPanel: NSPanel?
     private var controlsPanel: NSPanel?
+    private var previewObservation: AnyCancellable?
 
     func show(
         viewModel: ScrollingCaptureHUDViewModel,
@@ -35,15 +37,16 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
         dismiss()
         showPersistentFrame(for: selectedRegion)
 
-        let previewSize = NSSize(
-            width: previewWidth,
-            height: min(420, max(270, selectedRegion.height))
-        )
+        // The panel begins effectively invisible. Its first accepted page image
+        // gives it the exact miniature aspect ratio; no loading card is exposed.
+        let previewSize = NSSize(width: 1, height: 1)
         let previewPanel = makePanel(contentSize: previewSize)
+        previewPanel.ignoresMouseEvents = true
         let previewView = NSHostingView(
             rootView: ScrollingCaptureHUDView(viewModel: viewModel)
         )
         previewView.frame = NSRect(origin: .zero, size: previewSize)
+        previewView.autoresizingMask = [.width, .height]
         previewPanel.contentView = previewView
         previewPanel.setFrame(
             previewPanelFrame(
@@ -54,6 +57,17 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
         )
         previewPanel.orderFrontRegardless()
         self.previewPanel = previewPanel
+
+        previewObservation = viewModel.$previewImage
+            .compactMap { $0 }
+            .sink { [weak self, weak previewPanel] image in
+                guard let self, let previewPanel else { return }
+                self.resizePreviewPanel(
+                    previewPanel,
+                    for: image,
+                    adjacentTo: selectedRegion
+                )
+            }
 
         let controlsPanel = makePanel(contentSize: controlsSize)
         let controlsView = NSHostingView(
@@ -70,6 +84,9 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
     }
 
     func dismiss() {
+        previewObservation?.cancel()
+        previewObservation = nil
+
         previewPanel?.orderOut(nil)
         previewPanel?.contentView = nil
         previewPanel = nil
@@ -125,8 +142,11 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
         contentSize: NSSize
     ) -> CGRect {
         let screenFrame = captureScreen(for: region)?.frame ?? region
-        let centeredY = clamp(
-            region.midY - contentSize.height / 2,
+        // Keep the top of the page miniature stable while its captured length
+        // grows downward. This makes progress legible instead of making the HUD
+        // jump around its center on every accepted strip.
+        let topAlignedY = clamp(
+            region.maxY - contentSize.height,
             minimum: screenFrame.minY + edgeMargin,
             maximum: screenFrame.maxY - contentSize.height - edgeMargin
         )
@@ -134,7 +154,7 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
         let rightX = region.maxX + edgeMargin
         if rightX + contentSize.width <= screenFrame.maxX - edgeMargin {
             return CGRect(
-                origin: CGPoint(x: rightX, y: centeredY),
+                origin: CGPoint(x: rightX, y: topAlignedY),
                 size: contentSize
             )
         }
@@ -142,7 +162,7 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
         let leftX = region.minX - edgeMargin - contentSize.width
         if leftX >= screenFrame.minX + edgeMargin {
             return CGRect(
-                origin: CGPoint(x: leftX, y: centeredY),
+                origin: CGPoint(x: leftX, y: topAlignedY),
                 size: contentSize
             )
         }
@@ -171,6 +191,45 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
             ),
             size: contentSize
         )
+    }
+
+    private func resizePreviewPanel(
+        _ panel: NSPanel,
+        for image: CGImage,
+        adjacentTo region: CGRect
+    ) {
+        guard image.width > 0, image.height > 0 else { return }
+
+        let screenFrame = captureScreen(for: region)?.frame ?? region
+        let availableHeight = max(1, screenFrame.height - edgeMargin * 2)
+        let bounds = NSSize(
+            width: min(previewMaximumSize.width, max(1, screenFrame.width - edgeMargin * 2)),
+            height: min(previewMaximumSize.height, availableHeight)
+        )
+        let scale = min(
+            bounds.width / CGFloat(image.width),
+            bounds.height / CGFloat(image.height)
+        )
+        let contentSize = NSSize(
+            width: max(1, CGFloat(image.width) * scale),
+            height: max(1, CGFloat(image.height) * scale)
+        )
+        let targetFrame = previewPanelFrame(
+            adjacentTo: region,
+            contentSize: contentSize
+        )
+
+        // The first page appears immediately. Later accepted strips smoothly
+        // lengthen the miniature while its top edge remains visually anchored.
+        guard panel.frame.width > 1.5, panel.frame.height > 1.5 else {
+            panel.setFrame(targetFrame, display: true)
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.allowsImplicitAnimation = true
+            panel.animator().setFrame(targetFrame, display: true)
+        }
     }
 
     private func controlsPanelFrame(for region: CGRect) -> CGRect {

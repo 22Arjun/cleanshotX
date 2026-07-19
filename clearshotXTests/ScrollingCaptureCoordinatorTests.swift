@@ -42,6 +42,153 @@ final class ScrollingCaptureHUDReducerTests: XCTestCase {
     }
 }
 
+final class ScrollingCapturePreviewBuilderTests: XCTestCase {
+    func testShortPageKeepsItsNaturalAspectWithoutUpscaling() throws {
+        let builder = ScrollingCapturePreviewBuilder(
+            maximumSize: CGSize(width: 240, height: 420),
+            contentInsets: .zero
+        )
+        let frame = makeSolidImage(width: 120, height: 80)
+        let progress = ScrollingCaptureProgress(
+            acceptedFrameCount: 1,
+            rejectedFrameCount: 0,
+            outputPixelWidth: 120,
+            outputPixelHeight: 80,
+            lastAlignment: nil
+        )
+
+        let preview = try XCTUnwrap(builder.apply(frame: frame, decision: .started(progress)))
+
+        XCTAssertEqual(preview.width, 120)
+        XCTAssertEqual(preview.height, 80)
+    }
+
+    func testGrowingPageAlwaysRepresentsWholeDocumentWithinBoundedPixels() throws {
+        let maximumSize = CGSize(width: 100, height: 160)
+        let builder = ScrollingCapturePreviewBuilder(
+            maximumSize: maximumSize,
+            contentInsets: .zero
+        )
+        let frame = makeSolidImage(width: 200, height: 120)
+        let started = ScrollingCaptureProgress(
+            acceptedFrameCount: 1,
+            rejectedFrameCount: 0,
+            outputPixelWidth: 200,
+            outputPixelHeight: 120,
+            lastAlignment: nil
+        )
+        _ = try XCTUnwrap(builder.apply(frame: frame, decision: .started(started)))
+
+        var latestPreview: CGImage?
+        for index in 1...10 {
+            let outputHeight = 120 + index * 60
+            let progress = ScrollingCaptureProgress(
+                acceptedFrameCount: index + 1,
+                rejectedFrameCount: 0,
+                outputPixelWidth: 200,
+                outputPixelHeight: outputHeight,
+                lastAlignment: ScrollingCaptureAlignment(
+                    verticalOffset: 60,
+                    difference: 0,
+                    confidence: 1
+                )
+            )
+            latestPreview = builder.apply(frame: frame, decision: .appended(progress))
+        }
+
+        let preview = try XCTUnwrap(latestPreview)
+        XCTAssertLessThanOrEqual(preview.width, Int(maximumSize.width))
+        XCTAssertLessThanOrEqual(preview.height, Int(maximumSize.height))
+
+        let expectedAspect = 200.0 / 720.0
+        let actualAspect = Double(preview.width) / Double(preview.height)
+        XCTAssertEqual(actualAspect, expectedAspect, accuracy: 0.015)
+    }
+
+    func testCoalescedProgressUsesLatestViewportWithoutLosingDocumentAspect() throws {
+        let builder = ScrollingCapturePreviewBuilder(
+            maximumSize: CGSize(width: 100, height: 160),
+            contentInsets: .zero
+        )
+        let frame = makeSolidImage(width: 200, height: 120)
+        let started = ScrollingCaptureProgress(
+            acceptedFrameCount: 1,
+            rejectedFrameCount: 0,
+            outputPixelWidth: 200,
+            outputPixelHeight: 120,
+            lastAlignment: nil
+        )
+        _ = try XCTUnwrap(builder.apply(frame: frame, decision: .started(started)))
+
+        // Represents two 60-pixel updates coalesced into one request. The latest
+        // viewport still contains the complete newly exposed range.
+        let coalesced = ScrollingCaptureProgress(
+            acceptedFrameCount: 3,
+            rejectedFrameCount: 0,
+            outputPixelWidth: 200,
+            outputPixelHeight: 240,
+            lastAlignment: ScrollingCaptureAlignment(
+                verticalOffset: 60,
+                difference: 0,
+                confidence: 1
+            )
+        )
+        let preview = try XCTUnwrap(
+            builder.apply(frame: frame, decision: .appended(coalesced))
+        )
+
+        XCTAssertEqual(
+            Double(preview.width) / Double(preview.height),
+            200.0 / 240.0,
+            accuracy: 0.015
+        )
+    }
+
+    func testUnrecoverablePreviewGapFreezesInsteadOfStretchingPixels() throws {
+        let builder = ScrollingCapturePreviewBuilder(
+            maximumSize: CGSize(width: 100, height: 160),
+            contentInsets: .zero
+        )
+        let frame = makeSolidImage(width: 200, height: 120)
+        let started = ScrollingCaptureProgress(
+            acceptedFrameCount: 1,
+            rejectedFrameCount: 0,
+            outputPixelWidth: 200,
+            outputPixelHeight: 120,
+            lastAlignment: nil
+        )
+        _ = try XCTUnwrap(builder.apply(frame: frame, decision: .started(started)))
+
+        let unrecoverable = ScrollingCaptureProgress(
+            acceptedFrameCount: 4,
+            rejectedFrameCount: 0,
+            outputPixelWidth: 200,
+            outputPixelHeight: 300,
+            lastAlignment: ScrollingCaptureAlignment(
+                verticalOffset: 60,
+                difference: 0,
+                confidence: 1
+            )
+        )
+        XCTAssertNil(builder.apply(frame: frame, decision: .appended(unrecoverable)))
+
+        // A later bridge from the still-truthful prefix remains possible because
+        // the rejected HUD update did not advance the builder's source position.
+        let recoverable = ScrollingCaptureProgress(
+            acceptedFrameCount: 2,
+            rejectedFrameCount: 0,
+            outputPixelWidth: 200,
+            outputPixelHeight: 180,
+            lastAlignment: ScrollingCaptureAlignment(
+                verticalOffset: 60,
+                difference: 0,
+                confidence: 1
+            )
+        )
+        XCTAssertNotNil(builder.apply(frame: frame, decision: .appended(recoverable)))
+    }
+}
+
 @MainActor
 final class ScrollingCaptureCoordinatorTests: XCTestCase {
     func testCancelStopsSourceDismissesHUDAndReturnsNoCapture() async throws {
