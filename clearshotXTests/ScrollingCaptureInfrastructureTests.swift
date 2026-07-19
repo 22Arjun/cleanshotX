@@ -110,6 +110,10 @@ final class ScrollingCaptureSessionTests: XCTestCase {
         guard case let .appended(progress) = try session.ingest(second) else {
             return XCTFail("Expected the content viewport to align.")
         }
+        // A settled delivery confirms the deferred native strip before finalizing.
+        guard case .duplicate = try session.ingest(second) else {
+            return XCTFail("Expected the settled viewport to confirm the final strip.")
+        }
 
         let output = try session.finish()
         XCTAssertEqual(output.height, progress.outputPixelHeight)

@@ -21,19 +21,27 @@ nonisolated struct ScrollingCaptureContentInsets: Equatable, Sendable {
 nonisolated struct ScrollingCaptureConfiguration: Equatable, Sendable {
     /// Frames are reduced before registration. This bounds registration work while
     /// retaining enough horizontal detail to distinguish text and interface rows.
-    var maximumAnalysisWidth = 192
-    var maximumAnalysisHeight = 320
+    var maximumAnalysisWidth = 256
+    var maximumAnalysisHeight = 640
 
     /// A smaller movement is treated as an unstable/duplicate frame instead of a
     /// useful scroll step.
     var minimumScrollDistance = 8
-    var maximumScrollFraction = 0.82
-    var minimumOverlapFraction = 0.18
+    var maximumScrollFraction = 0.72
+    var minimumOverlapFraction = 0.28
 
     /// Mean absolute luma differences are normalized to 0...1.
     var duplicateDifferenceThreshold = 0.012
-    var maximumAlignmentDifference = 0.075
-    var minimumAlignmentConfidence = 0.16
+    var maximumAlignmentDifference = 0.055
+    var minimumAlignmentConfidence = 0.18
+
+    /// Registration must be supported by real edges distributed across the
+    /// viewport. These gates prevent a large white area or one repeated row from
+    /// overpowering the comparatively small amount of text in a web page.
+    var stationaryDifferenceThreshold = 0.035
+    var minimumRegistrationTextureFraction = 0.006
+    var minimumRegistrationBandAgreement = 0.60
+    var minimumDirectionConfidence = 0.12
 
     /// Fixed top/bottom chrome can be excluded from registration and emitted once.
     /// Automatic fixed-band detection will populate this in a later pipeline stage.

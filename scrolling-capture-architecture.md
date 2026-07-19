@@ -70,9 +70,9 @@ One final Core Graphics render → CaptureStore → Quick Access
 
 ## Infrastructure now in the project
 
-`ScrollingCaptureFrameAnalyzer` performs bounded one-axis luma registration. It reports duplicate, aligned, or rejected with a normalized difference and a confidence score. It ignores narrow side bands where scrollbars usually animate.
+`ScrollingCaptureFrameAnalyzer` performs bounded one-axis registration using luma, edge agreement, texture coverage, six spatial evidence bands, forward uniqueness, and reverse-direction competition. Zero-motion is scored explicitly, so a caret, video, font repaint, or late-loaded image cannot invent document movement merely because the full-frame pixels changed.
 
-`ScrollingCaptureSession` is the transactional state machine. It never advances its reference on rejected frames, requires stable frame dimensions, applies hard output limits, and exposes progress suitable for a floating HUD.
+`ScrollingCaptureSession` is the transactional state machine. It never advances its reference on rejected frames, requires stable frame dimensions, applies hard output limits, and exposes progress suitable for a floating HUD. Coarse estimates receive a horizontally reduced but full-native-height refinement before composition. A sparse native-row recovery search runs only when coarse sampling cannot represent the true Retina offset.
 
 `ScrollingCaptureRegionResolver` converts an AppKit global selection into a pixel-aligned, display-local ScreenCaptureKit rectangle. It rejects cross-display selections and records exact native output dimensions, including Retina scaling and offset display layouts.
 
@@ -80,7 +80,7 @@ One final Core Graphics render → CaptureStore → Quick Access
 
 `LatestValueProcessor` provides bounded backpressure. While analysis is busy, it keeps only the newest pending frame, so capture latency and memory cannot grow with the stream duration.
 
-`ScrollingCaptureCoordinator` now connects selection, streaming, stitching, bounded preview rendering, final rendering, storage, and Quick Access as one guarded lifecycle. It serializes pause/resume/finish/cancel/error completion, assembles the final bitmap off the main actor, preserves a valid partial capture after a stream or analysis failure when at least one frame exists, and ignores stale callbacks using a per-capture identity. Resume rebases registration on the first settled frame without appending duplicate rows.
+`ScrollingCaptureCoordinator` now connects selection, streaming, stitching, bounded preview rendering, final rendering, storage, and Quick Access as one guarded lifecycle. It serializes pause/resume/finish/cancel/error completion, assembles the final bitmap off the main actor, preserves a valid partial capture after a stream or analysis failure when at least one frame exists, and ignores stale callbacks using a per-capture identity. Resume must prove continuity with the last accepted viewport; it never blindly rebases across document rows that may have been skipped while paused.
 
 `ScrollingCaptureRegionSelectionManager` is intentionally separate from ordinary Region Capture. Mouse-up preserves the selection instead of committing it; eight resize targets, whole-frame movement, keyboard nudging, native-pixel dimensions, and explicit Start/Cancel controls remain available until confirmation. The target app is restored to the foreground before streaming begins, and the locked selection overlay overlaps handoff to the live capture UI so the frame never flashes away.
 
@@ -88,18 +88,18 @@ One final Core Graphics render → CaptureStore → Quick Access
 
 `ScrollingCapturePreviewBuilder` incrementally updates a downsampled representation only when the compositor accepts new rows. Its decoded size is permanently capped at 240×280 pixels, so live feedback does not retain or repeatedly render the full-resolution output and duplicate/rejected frames do not trigger redundant UI work. Preview resolution is therefore independent from output resolution: accepted strips are always cropped and composed from native ScreenCaptureKit frames without rescaling.
 
-`ScrollingCaptureFrameAnalyzer` caches the accepted reference as a small luma plane. Each incoming frame is downsampled once for registration and an accepted candidate is promoted without reconverting the previous native frame. The compositor still receives the untouched native image, reducing analysis work without trading away output detail.
+`ScrollingCaptureFrameAnalyzer` caches the accepted reference as a small coarse plane. Each incoming frame is downsampled once for broad registration and an accepted candidate is promoted without reconverting the previous native frame. A second continuity plane reduces horizontal detail only and preserves every physical vertical row; its dense search is limited to a narrow neighborhood. The compositor still receives the untouched native image, reducing analysis work without trading away output detail.
 
-The compositor keeps the initial viewport body plus only the newly revealed strip from each accepted frame. This avoids retaining duplicate frames and avoids repeatedly reallocating an ever-growing bitmap. A configured fixed header is retained from the first frame; a fixed footer is replaced and emitted from the final accepted frame.
+The compositor keeps the initial viewport body plus only newly revealed native strips. New rows remain in a bounded deferred tail until another aligned or settled frame confirms them; later overlap supplies cleaner pixels before the strip becomes immutable. Automatic boundary analysis detects sticky headers and footers, retains the header once, and replaces the footer from the final settled frame. An uncertain one-frame tail is omitted rather than saving a corrupt seam.
 
-Regression tests cover exact displacement, duplicate rejection, ambiguous content, overlap removal, fixed bands, resizing, output limits, multi-display geometry, Retina pixel alignment, frame completeness, and latest-frame backpressure using deterministic inputs.
+Regression tests cover exact displacement, repeated frames while stopped, resumed scrolling, variable fast offsets, ambiguous periodic rows, local late-loading changes, reverse jitter, no-overlap gaps, configured and automatically detected fixed bands, image-heavy seams, and 1500-pixel-tall Retina alignment using deterministic pixel-for-pixel comparisons.
 
 ## Next implementation slices
 
 ### Completed: frame-source adapter
 
 - Converts the selected AppKit global rectangle to a single display-local top-left `sourceRect`.
-- Configures `SCStream` for native pixel size, BGRA, cursor hidden, 15 fps, and queue depth 3.
+- Configures `SCStream` for native pixel size, BGRA, cursor hidden, 30 fps, and queue depth 3.
 - Reads `SCFrameStatus.complete`, scale/content metadata, and dirty rectangles.
 - Uses a serial processing queue with a one-frame latest-wins mailbox.
 - Converts only complete, correctly sized `CVPixelBuffer` frames to `CGImage`.

@@ -15,9 +15,20 @@ nonisolated final class ScrollingCaptureFrameAnalyzer {
 
     private var referencePlane: LumaPlane?
     private var candidatePlane: LumaPlane?
+    private var activeContentInsets: ScrollingCaptureContentInsets
 
     init(configuration: ScrollingCaptureConfiguration) {
         self.configuration = configuration
+        activeContentInsets = configuration.contentInsets
+    }
+
+    /// Locks automatically detected sticky chrome out of every later comparison.
+    /// Explicit configuration remains the lower bound and is never reduced.
+    func updateContentInsets(_ detected: ScrollingCaptureContentInsets) {
+        activeContentInsets = ScrollingCaptureContentInsets(
+            top: max(configuration.contentInsets.top, detected.top),
+            bottom: max(configuration.contentInsets.bottom, detected.bottom)
+        )
     }
 
     func analyze(previous: CGImage, current: CGImage) -> ScrollingCaptureAnalysisResult {
@@ -97,26 +108,15 @@ nonisolated final class ScrollingCaptureFrameAnalyzer {
 
         let topInset = min(
             previousPlane.height,
-            Int((Double(configuration.contentInsets.top) * previousPlane.verticalScale).rounded())
+            Int((Double(activeContentInsets.top) * previousPlane.verticalScale).rounded())
         )
         let bottomInset = min(
             previousPlane.height - topInset,
-            Int((Double(configuration.contentInsets.bottom) * previousPlane.verticalScale).rounded())
+            Int((Double(activeContentInsets.bottom) * previousPlane.verticalScale).rounded())
         )
         let contentHeight = previousPlane.height - topInset - bottomInset
         guard contentHeight >= 4 else {
             return .rejected(.insufficientOverlap)
-        }
-
-        let duplicateDifference = meanAbsoluteDifference(
-            previous: previousPlane,
-            current: currentPlane,
-            previousStartRow: topInset,
-            currentStartRow: topInset,
-            rowCount: contentHeight
-        )
-        if duplicateDifference <= configuration.duplicateDifferenceThreshold {
-            return .duplicate(difference: duplicateDifference)
         }
 
         let minimumShift = max(
@@ -135,48 +135,98 @@ nonisolated final class ScrollingCaptureFrameAnalyzer {
             return .rejected(.insufficientOverlap)
         }
 
-        var candidates: [(shift: Int, difference: Double)] = []
-        candidates.reserveCapacity(maximumShift - minimumShift + 1)
+        // Score zero movement before looking for a scroll. A stopped page may still
+        // contain a blinking caret, video, lazy image, or antialiasing changes. The
+        // robust feature score intentionally ignores one disagreeing vertical band,
+        // allowing those frames to remain stationary instead of inventing movement.
+        let stationary = registrationScore(
+            previous: previousPlane,
+            current: currentPlane,
+            previousStartRow: topInset,
+            currentStartRow: topInset,
+            rowCount: contentHeight,
+            samplingStride: 2
+        )
 
-        for shift in minimumShift...maximumShift {
-            let overlap = contentHeight - shift
-            let difference = meanAbsoluteDifference(
-                previous: previousPlane,
-                current: currentPlane,
-                previousStartRow: topInset + shift,
-                currentStartRow: topInset,
-                rowCount: overlap
-            )
-            candidates.append((shift, difference))
-        }
-
-        guard let best = candidates.min(by: { $0.difference < $1.difference }) else {
+        let forwardCandidates = alignmentCandidates(
+            previous: previousPlane,
+            current: currentPlane,
+            topInset: topInset,
+            contentHeight: contentHeight,
+            minimumShift: minimumShift,
+            maximumShift: maximumShift,
+            direction: .forward
+        )
+        guard let best = forwardCandidates.min(by: { $0.score.value < $1.score.value }) else {
             return .rejected(.insufficientOverlap)
         }
 
-        // Adjacent offsets often have correlated scores after downsampling. Compare
-        // against the best meaningfully different hypothesis to measure ambiguity.
-        let confidenceNeighborhood = max(2, Int((previousPlane.verticalScale * 4).rounded()))
-        let secondBestDifference = candidates
+        let stationaryClearlyWins = stationary.value <= configuration.stationaryDifferenceThreshold
+            && stationary.value <= best.score.value * 0.82
+        if stationary.value <= configuration.duplicateDifferenceThreshold
+            || stationaryClearlyWins {
+            return .duplicate(difference: stationary.value)
+        }
+
+        // Compare against a genuinely different forward hypothesis. Repeated menu
+        // rows, cards, and lines of text otherwise form deceptively sharp minima.
+        let confidenceNeighborhood = max(2, Int((previousPlane.verticalScale * 6).rounded(.up)))
+        let secondBestDifference = forwardCandidates
             .filter { abs($0.shift - best.shift) > confidenceNeighborhood }
-            .map(\.difference)
+            .map(\.score.value)
             .min() ?? 1
         let uniqueness = max(
             0,
-            (secondBestDifference - best.difference) / max(secondBestDifference, 0.000_001)
+            (secondBestDifference - best.score.value) / max(secondBestDifference, 0.000_001)
+        )
+
+        // Search the prohibited (upward-content) transform too. A legitimate
+        // downward scroll should be materially more plausible than this inverse
+        // explanation. If both directions fit, the page is repetitive/ambiguous and
+        // skipping the frame is safer than permanently cutting the output.
+        let reverseBest = alignmentCandidates(
+            previous: previousPlane,
+            current: currentPlane,
+            topInset: topInset,
+            contentHeight: contentHeight,
+            minimumShift: minimumShift,
+            maximumShift: maximumShift,
+            direction: .reverse,
+            refinementSeedCount: 2
+        )
+        .map(\.score.value)
+        .min() ?? 1
+        let directionConfidence = max(
+            0,
+            (reverseBest - best.score.value) / max(reverseBest, 0.000_001)
         )
         let matchQuality = max(
             0,
-            1 - best.difference / max(configuration.maximumAlignmentDifference, 0.000_001)
+            1 - best.score.value / max(configuration.maximumAlignmentDifference, 0.000_001)
         )
-        let confidence = min(matchQuality, uniqueness)
+        let textureConfidence = min(
+            1,
+            best.score.textureFraction
+                / max(configuration.minimumRegistrationTextureFraction * 3, 0.000_001)
+        )
+        let confidence = min(
+            matchQuality,
+            uniqueness,
+            directionConfidence,
+            best.score.bandAgreement,
+            textureConfidence
+        )
 
-        guard best.difference <= configuration.maximumAlignmentDifference,
+        guard best.score.value <= configuration.maximumAlignmentDifference,
+              best.score.textureFraction >= configuration.minimumRegistrationTextureFraction,
+              best.score.informativeBandCount >= 2,
+              best.score.bandAgreement >= configuration.minimumRegistrationBandAgreement,
+              directionConfidence >= configuration.minimumDirectionConfidence,
               confidence >= configuration.minimumAlignmentConfidence
         else {
             return .rejected(
                 .noReliableAlignment(
-                    bestDifference: best.difference,
+                    bestDifference: best.score.value,
                     confidence: confidence
                 )
             )
@@ -189,52 +239,276 @@ nonisolated final class ScrollingCaptureFrameAnalyzer {
         return .aligned(
             ScrollingCaptureAlignment(
                 verticalOffset: fullResolutionOffset,
-                difference: best.difference,
+                difference: best.score.value,
                 confidence: confidence
             )
         )
     }
 
-    private func meanAbsoluteDifference(
+    private enum RegistrationDirection {
+        case forward
+        case reverse
+    }
+
+    private struct AlignmentCandidate {
+        let shift: Int
+        let score: RegistrationScore
+    }
+
+    private struct RegistrationScore {
+        let value: Double
+        let textureFraction: Double
+        let informativeBandCount: Int
+        let bandAgreement: Double
+    }
+
+    /// Hierarchical search keeps the larger, vertically detailed analysis plane
+    /// affordable: find several coarse minima, then evaluate every nearby row. This
+    /// preserves fast-scroll range without paying for a full dense search.
+    private func alignmentCandidates(
+        previous: LumaPlane,
+        current: LumaPlane,
+        topInset: Int,
+        contentHeight: Int,
+        minimumShift: Int,
+        maximumShift: Int,
+        direction: RegistrationDirection,
+        refinementSeedCount: Int = 4
+    ) -> [AlignmentCandidate] {
+        // Evaluate every row at the bounded analysis resolution. Sparse stepping
+        // can completely miss the true minimum on text and other high-frequency
+        // content: the scores one row either side of an exact match need not be
+        // locally smooth. The coarse pass is still inexpensive because it samples
+        // every fourth row/column, while the best hypotheses receive a denser pass.
+        let coarseStep = 1
+        var coarse: [AlignmentCandidate] = []
+        var shift = minimumShift
+        while shift <= maximumShift {
+            coarse.append(
+                scoreCandidate(
+                    previous: previous,
+                    current: current,
+                    topInset: topInset,
+                    contentHeight: contentHeight,
+                    shift: shift,
+                    direction: direction,
+                    samplingStride: 4
+                )
+            )
+            shift += coarseStep
+        }
+        if coarse.last?.shift != maximumShift {
+            coarse.append(
+                scoreCandidate(
+                    previous: previous,
+                    current: current,
+                    topInset: topInset,
+                    contentHeight: contentHeight,
+                    shift: maximumShift,
+                    direction: direction,
+                    samplingStride: 4
+                )
+            )
+        }
+
+        let seeds = coarse.sorted { $0.score.value < $1.score.value }
+            .prefix(max(1, refinementSeedCount))
+        var refinedByShift: [Int: AlignmentCandidate] = [:]
+        for seed in seeds {
+            let lower = max(minimumShift, seed.shift - coarseStep)
+            let upper = min(maximumShift, seed.shift + coarseStep)
+            for refinedShift in lower...upper {
+                refinedByShift[refinedShift] = scoreCandidate(
+                    previous: previous,
+                    current: current,
+                    topInset: topInset,
+                    contentHeight: contentHeight,
+                    shift: refinedShift,
+                    direction: direction,
+                    samplingStride: 2
+                )
+            }
+        }
+
+        // Preserve coarse alternative minima for the uniqueness gate while letting
+        // their refined equivalents replace them where available.
+        for candidate in coarse where refinedByShift[candidate.shift] == nil {
+            refinedByShift[candidate.shift] = candidate
+        }
+        return Array(refinedByShift.values)
+    }
+
+    private func scoreCandidate(
+        previous: LumaPlane,
+        current: LumaPlane,
+        topInset: Int,
+        contentHeight: Int,
+        shift: Int,
+        direction: RegistrationDirection,
+        samplingStride: Int
+    ) -> AlignmentCandidate {
+        let overlap = contentHeight - shift
+        let starts: (previous: Int, current: Int)
+        switch direction {
+        case .forward:
+            starts = (topInset + shift, topInset)
+        case .reverse:
+            starts = (topInset, topInset + shift)
+        }
+        return AlignmentCandidate(
+            shift: shift,
+            score: registrationScore(
+                previous: previous,
+                current: current,
+                previousStartRow: starts.previous,
+                currentStartRow: starts.current,
+                rowCount: overlap,
+                samplingStride: samplingStride
+            )
+        )
+    }
+
+    /// Combines luminance and edge agreement, then checks independent vertical
+    /// bands. Text occupies few pixels on a white page; edge-weighted samples keep
+    /// those pixels decisive. Dropping only the single worst band tolerates one
+    /// animated/lazy-loaded region without letting broad disagreement pass.
+    private func registrationScore(
         previous: LumaPlane,
         current: LumaPlane,
         previousStartRow: Int,
         currentStartRow: Int,
-        rowCount: Int
-    ) -> Double {
-        guard rowCount > 0 else { return 1 }
+        rowCount: Int,
+        samplingStride: Int
+    ) -> RegistrationScore {
+        guard rowCount > 2 else {
+            return RegistrationScore(
+                value: 1,
+                textureFraction: 0,
+                informativeBandCount: 0,
+                bandAgreement: 0
+            )
+        }
 
         // Ignore a narrow edge band where scrollbars and window borders commonly
         // animate independently of document content.
         let edgeInset = min(max(1, previous.width / 32), max(0, previous.width / 4))
         let startColumn = edgeInset
         let endColumn = max(startColumn + 1, previous.width - edgeInset)
-        let columnStride = previous.width > 128 ? 2 : 1
-        let rowStride = rowCount > 180 ? 2 : 1
-
-        var totalDifference = 0
+        let stride = max(1, samplingStride)
+        let bandCount = 6
+        var bands = Array(repeating: RegistrationBand(), count: bandCount)
+        var totalLumaDifference = 0.0
+        var totalFeatureDifference = 0.0
+        var texturedSampleCount = 0
         var sampleCount = 0
 
-        var row = 0
+        var row = 1
         while row < rowCount {
-            let previousBase = (previousStartRow + row) * previous.width
-            let currentBase = (currentStartRow + row) * current.width
+            let previousRow = previousStartRow + row
+            let currentRow = currentStartRow + row
+            let previousBase = previousRow * previous.width
+            let currentBase = currentRow * current.width
+            let previousPriorBase = (previousRow - 1) * previous.width
+            let currentPriorBase = (currentRow - 1) * current.width
+            let bandIndex = min(bandCount - 1, row * bandCount / rowCount)
 
-            var column = startColumn
+            var column = max(startColumn + 1, 1)
             while column < endColumn {
-                totalDifference += abs(
-                    Int(previous.pixels[previousBase + column])
-                        - Int(current.pixels[currentBase + column])
+                let previousValue = Int(previous.pixels[previousBase + column])
+                let currentValue = Int(current.pixels[currentBase + column])
+                let lumaDifference = Double(abs(previousValue - currentValue)) / 255
+                let previousGradient = min(
+                    255,
+                    abs(previousValue - Int(previous.pixels[previousPriorBase + column]))
+                        + abs(previousValue - Int(previous.pixels[previousBase + column - 1]))
                 )
+                let currentGradient = min(
+                    255,
+                    abs(currentValue - Int(current.pixels[currentPriorBase + column]))
+                        + abs(currentValue - Int(current.pixels[currentBase + column - 1]))
+                )
+                let isTextured = max(previousGradient, currentGradient) >= 12
+
+                totalLumaDifference += lumaDifference
+                bands[bandIndex].lumaDifference += lumaDifference
+                bands[bandIndex].sampleCount += 1
+                if isTextured {
+                    let gradientDifference = Double(abs(previousGradient - currentGradient)) / 255
+                    let featureDifference = lumaDifference * 0.55 + gradientDifference * 0.45
+                    totalFeatureDifference += featureDifference
+                    texturedSampleCount += 1
+                    bands[bandIndex].featureDifference += featureDifference
+                    bands[bandIndex].texturedSampleCount += 1
+                }
                 sampleCount += 1
-                column += columnStride
+                column += stride
             }
-            row += rowStride
+            row += stride
         }
 
-        guard sampleCount > 0 else { return 1 }
-        return Double(totalDifference) / Double(sampleCount * 255)
+        guard sampleCount > 0 else {
+            return RegistrationScore(
+                value: 1,
+                textureFraction: 0,
+                informativeBandCount: 0,
+                bandAgreement: 0
+            )
+        }
+
+        let meanLuma = totalLumaDifference / Double(sampleCount)
+        let meanFeature = texturedSampleCount > 0
+            ? totalFeatureDifference / Double(texturedSampleCount)
+            : meanLuma
+        let informativeBands = bands.filter {
+            $0.texturedSampleCount >= max(4, $0.sampleCount / 200)
+        }
+        let bandValues = informativeBands.map { band -> Double in
+            let luma = band.lumaDifference / Double(max(1, band.sampleCount))
+            let feature = band.featureDifference / Double(max(1, band.texturedSampleCount))
+            return luma * 0.35 + feature * 0.65
+        }
+        let sortedBandValues = bandValues.sorted()
+        let robustBandValue: Double
+        if sortedBandValues.count >= 5 {
+            // A sticky header and a sticky footer can occupy two independent
+            // boundary bands. Ignore at most those two outliers during the first
+            // alignment; the native continuity pass then detects their exact rows.
+            let retained = sortedBandValues.dropLast(2)
+            robustBandValue = retained.reduce(0, +) / Double(retained.count)
+        } else if sortedBandValues.count >= 4 {
+            robustBandValue = sortedBandValues.dropLast().reduce(0, +)
+                / Double(sortedBandValues.count - 1)
+        } else if !sortedBandValues.isEmpty {
+            robustBandValue = sortedBandValues.reduce(0, +) / Double(sortedBandValues.count)
+        } else {
+            robustBandValue = meanLuma
+        }
+        let agreementThreshold = max(
+            configuration.maximumAlignmentDifference * 1.35,
+            robustBandValue * 1.8 + 0.002
+        )
+        let agreeingBands = bandValues.filter { $0 <= agreementThreshold }.count
+        let bandAgreement = bandValues.isEmpty
+            ? 0
+            : Double(agreeingBands) / Double(bandValues.count)
+        let combinedValue = meanLuma * 0.12
+            + meanFeature * 0.28
+            + robustBandValue * 0.60
+
+        return RegistrationScore(
+            value: combinedValue,
+            textureFraction: Double(texturedSampleCount) / Double(sampleCount),
+            informativeBandCount: informativeBands.count,
+            bandAgreement: bandAgreement
+        )
     }
+}
+
+private nonisolated struct RegistrationBand {
+    var lumaDifference = 0.0
+    var featureDifference = 0.0
+    var sampleCount = 0
+    var texturedSampleCount = 0
 }
 
 private nonisolated struct LumaPlane {
@@ -252,15 +526,11 @@ private nonisolated struct LumaPlane {
             return nil
         }
 
-        let scale = min(
-            1,
-            min(
-                Double(maximumWidth) / Double(image.width),
-                Double(maximumHeight) / Double(image.height)
-            )
-        )
-        let sampledWidth = max(1, Int((Double(image.width) * scale).rounded()))
-        let sampledHeight = max(1, Int((Double(image.height) * scale).rounded()))
+        // Vertical offset accuracy and horizontal discriminating detail have
+        // different requirements. Sample each axis independently so a very wide
+        // Retina selection does not collapse vertical registration resolution.
+        let sampledWidth = max(1, min(image.width, maximumWidth))
+        let sampledHeight = max(1, min(image.height, maximumHeight))
 
         var storage = [UInt8](repeating: 0, count: sampledWidth * sampledHeight)
         let colorSpace = CGColorSpaceCreateDeviceGray()
