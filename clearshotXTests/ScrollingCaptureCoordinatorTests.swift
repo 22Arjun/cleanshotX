@@ -150,6 +150,8 @@ private nonisolated final class FakeScrollingFrameSource:
         recordStop()
     }
 
+    func setFrameDeliveryEnabled(_ isEnabled: Bool) {}
+
     private func setFrameHandler(
         _ frameHandler: @escaping @Sendable (ScrollingCaptureStreamFrame) -> Void
     ) {

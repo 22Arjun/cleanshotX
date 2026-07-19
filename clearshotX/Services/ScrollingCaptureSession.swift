@@ -101,6 +101,26 @@ nonisolated final class ScrollingCaptureSession {
         return try compositor.makeImage()
     }
 
+    /// Replaces the registration reference without adding output rows. This lets a
+    /// paused capture ignore transitional UI and continue from the settled viewport.
+    func rebase(_ frame: CGImage) throws -> ScrollingCaptureFrameDecision {
+        guard let referenceFrame, compositor != nil else {
+            return try ingest(frame)
+        }
+        guard referenceFrame.width == frame.width,
+              referenceFrame.height == frame.height
+        else {
+            throw ScrollingCaptureError.inconsistentFrameSize(
+                expected: CGSize(width: referenceFrame.width, height: referenceFrame.height),
+                actual: CGSize(width: frame.width, height: frame.height)
+            )
+        }
+
+        self.referenceFrame = frame
+        try compositor?.replaceFooter(from: frame)
+        return .rebased(progress())
+    }
+
     private func progress() -> ScrollingCaptureProgress {
         ScrollingCaptureProgress(
             acceptedFrameCount: acceptedFrameCount,
@@ -171,6 +191,13 @@ private nonisolated final class ScrollingCaptureCompositor {
             bottomInset: contentInsets.bottom
         )
         outputHeight += verticalOffset
+    }
+
+    func replaceFooter(from frame: CGImage) throws {
+        finalFooter = try Self.copyFooter(
+            from: frame,
+            bottomInset: contentInsets.bottom
+        )
     }
 
     func makeImage() throws -> CGImage {

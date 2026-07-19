@@ -9,6 +9,7 @@ enum ScrollingCaptureHUDPhase: Equatable {
     case starting
     case capturing
     case guidance
+    case paused
     case finishing
 }
 
@@ -35,6 +36,8 @@ struct ScrollingCaptureHUDState: Equatable {
             acceptedFrameCount <= 1 ? "Start scrolling" : "Capturing as you scroll"
         case .guidance:
             "Scroll a little slower"
+        case .paused:
+            "Capture paused"
         case .finishing:
             "Finishing capture…"
         }
@@ -48,6 +51,8 @@ struct ScrollingCaptureHUDState: Equatable {
             "Keep the area still horizontally, then finish when the page is complete."
         case .guidance:
             "Small, steady vertical steps produce the cleanest result."
+        case .paused:
+            "Adjust the page, then resume from the same scroll position."
         case .finishing:
             "Assembling and saving the accepted pixels"
         }
@@ -61,6 +66,18 @@ struct ScrollingCaptureHUDState: Equatable {
     var canFinish: Bool {
         acceptedFrameCount > 0 && phase != .finishing
     }
+
+    var canPause: Bool {
+        phase == .capturing || phase == .guidance || phase == .paused
+    }
+
+    var pauseButtonTitle: String {
+        phase == .paused ? "Resume" : "Pause"
+    }
+
+    var acceptedFramesText: String {
+        "\(acceptedFrameCount) \(acceptedFrameCount == 1 ? "frame" : "frames")"
+    }
 }
 
 enum ScrollingCaptureHUDReducer {
@@ -73,6 +90,10 @@ enum ScrollingCaptureHUDReducer {
     ) -> ScrollingCaptureHUDState {
         switch decision {
         case let .started(progress), let .appended(progress):
+            consecutiveRejections = 0
+            return state.updating(progress: progress, phase: .capturing)
+
+        case let .rebased(progress):
             consecutiveRejections = 0
             return state.updating(progress: progress, phase: .capturing)
 

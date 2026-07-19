@@ -15,6 +15,7 @@ final class ScrollingCaptureCoordinator {
         case idle
         case starting
         case capturing
+        case paused
         case finishing
         case cancelling
     }
@@ -59,7 +60,8 @@ final class ScrollingCaptureCoordinator {
         let worker = ScrollingCaptureWorker(configuration: configuration)
         let hudViewModel = ScrollingCaptureHUDViewModel(
             finish: { [weak self] in self?.finish() },
-            cancel: { [weak self] in self?.cancel() }
+            cancel: { [weak self] in self?.cancel() },
+            togglePause: { [weak self] in self?.togglePause() }
         )
 
         activeCaptureID = captureID
@@ -107,7 +109,7 @@ final class ScrollingCaptureCoordinator {
     }
 
     func finish() {
-        guard phase == .capturing,
+        guard phase == .capturing || phase == .paused,
               let captureID = activeCaptureID
         else {
             return
@@ -125,6 +127,7 @@ final class ScrollingCaptureCoordinator {
         }
 
         phase = .cancelling
+        frameSource.setFrameDeliveryEnabled(false)
         worker.cancel()
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -133,8 +136,31 @@ final class ScrollingCaptureCoordinator {
         }
     }
 
+    func togglePause() {
+        guard let worker else { return }
+
+        switch phase {
+        case .capturing:
+            frameSource.setFrameDeliveryEnabled(false)
+            worker.pause()
+            phase = .paused
+            hudState.phase = .paused
+            hudViewModel?.update(hudState)
+
+        case .paused:
+            worker.resume()
+            frameSource.setFrameDeliveryEnabled(true)
+            phase = .capturing
+            hudState.phase = .capturing
+            hudViewModel?.update(hudState)
+
+        default:
+            break
+        }
+    }
+
     private func handle(
-        _ result: Result<ScrollingCaptureFrameDecision, Error>,
+        _ result: Result<ScrollingCaptureWorkerUpdate, Error>,
         captureID: UUID
     ) {
         guard activeCaptureID == captureID,
@@ -144,13 +170,17 @@ final class ScrollingCaptureCoordinator {
         }
 
         switch result {
-        case let .success(decision):
+        case let .success(update):
+            let decision = update.decision
             hudState = ScrollingCaptureHUDReducer.applying(
                 decision,
                 to: hudState,
                 consecutiveRejections: &consecutiveRejections
             )
             hudViewModel?.update(hudState)
+            if let previewImage = update.previewImage {
+                hudViewModel?.updatePreview(previewImage)
+            }
 
             if case .reachedOutputLimit = decision {
                 finalize(captureID: captureID, stopSource: true, fallbackError: nil)
@@ -185,6 +215,7 @@ final class ScrollingCaptureCoordinator {
         }
 
         phase = .finishing
+        frameSource.setFrameDeliveryEnabled(false)
         hudState.phase = .finishing
         hudViewModel?.update(hudState)
 
@@ -271,19 +302,37 @@ final class ScrollingCaptureCoordinator {
 private nonisolated final class ScrollingCaptureWorker: @unchecked Sendable {
     private let lock = NSLock()
     private let session: ScrollingCaptureSession
+    private let previewBuilder: ScrollingCapturePreviewBuilder
     private var isActive = true
+    private var isPaused = false
+    private var needsRebase = false
 
     init(configuration: ScrollingCaptureConfiguration) {
         session = ScrollingCaptureSession(configuration: configuration)
+        previewBuilder = ScrollingCapturePreviewBuilder(
+            contentInsets: configuration.contentInsets
+        )
     }
 
     func ingest(
         _ image: CGImage
-    ) -> Result<ScrollingCaptureFrameDecision, Error>? {
+    ) -> Result<ScrollingCaptureWorkerUpdate, Error>? {
         lock.lock()
         defer { lock.unlock() }
-        guard isActive else { return nil }
-        return Result { try session.ingest(image) }
+        guard isActive, !isPaused else { return nil }
+        return Result {
+            let decision: ScrollingCaptureFrameDecision
+            if needsRebase {
+                decision = try session.rebase(image)
+                needsRebase = false
+            } else {
+                decision = try session.ingest(image)
+            }
+            return ScrollingCaptureWorkerUpdate(
+                decision: decision,
+                previewImage: previewBuilder.apply(frame: image, decision: decision)
+            )
+        }
     }
 
     func finish() throws -> CGImage {
@@ -299,4 +348,26 @@ private nonisolated final class ScrollingCaptureWorker: @unchecked Sendable {
         isActive = false
         lock.unlock()
     }
+
+    func pause() {
+        lock.lock()
+        if isActive {
+            isPaused = true
+        }
+        lock.unlock()
+    }
+
+    func resume() {
+        lock.lock()
+        if isActive, isPaused {
+            isPaused = false
+            needsRebase = true
+        }
+        lock.unlock()
+    }
+}
+
+private nonisolated struct ScrollingCaptureWorkerUpdate: Sendable {
+    let decision: ScrollingCaptureFrameDecision
+    let previewImage: CGImage?
 }

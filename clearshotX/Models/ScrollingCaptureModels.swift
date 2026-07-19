@@ -73,6 +73,7 @@ nonisolated struct ScrollingCaptureProgress: Equatable, Sendable {
 
 nonisolated enum ScrollingCaptureFrameDecision: Equatable, Sendable {
     case started(ScrollingCaptureProgress)
+    case rebased(ScrollingCaptureProgress)
     case appended(ScrollingCaptureProgress)
     case duplicate(ScrollingCaptureProgress)
     case rejected(ScrollingCaptureAnalysisRejection, ScrollingCaptureProgress)

@@ -17,6 +17,11 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
     ScrollingCaptureFrameSourcing,
     @unchecked Sendable
 {
+    private struct QueuedFrame: @unchecked Sendable {
+        let sampleBuffer: CMSampleBuffer
+        let deliveryGeneration: UInt64
+    }
+
     typealias FrameHandler = @Sendable (ScrollingCaptureStreamFrame) -> Void
     typealias FailureHandler = @Sendable (Error) -> Void
 
@@ -35,9 +40,11 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
     private var geometry: ScrollingCaptureRegionGeometry?
     private var frameHandler: FrameHandler?
     private var failureHandler: FailureHandler?
-    private var processor: LatestValueProcessor<CMSampleBuffer>?
+    private var processor: LatestValueProcessor<QueuedFrame>?
     private var isStarting = false
     private var isStopping = false
+    private var isFrameDeliveryEnabled = false
+    private var deliveryGeneration: UInt64 = 0
 
     func start(
         selectedRegion: CGRect,
@@ -96,10 +103,10 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
                 configuration: configuration,
                 delegate: self
             )
-            let processor = LatestValueProcessor<CMSampleBuffer>(
+            let processor = LatestValueProcessor<QueuedFrame>(
                 queue: processingQueue
-            ) { [weak self] sampleBuffer in
-                self?.process(sampleBuffer)
+            ) { [weak self] queuedFrame in
+                self?.process(queuedFrame)
             }
 
             installState(
@@ -130,7 +137,17 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
         try? activeStream.removeStreamOutput(self, type: .screen)
     }
 
-    private func process(_ sampleBuffer: CMSampleBuffer) {
+    func setFrameDeliveryEnabled(_ isEnabled: Bool) {
+        stateLock.lock()
+        if isFrameDeliveryEnabled != isEnabled {
+            isFrameDeliveryEnabled = isEnabled
+            deliveryGeneration &+= 1
+        }
+        stateLock.unlock()
+    }
+
+    private func process(_ queuedFrame: QueuedFrame) {
+        let sampleBuffer = queuedFrame.sampleBuffer
         guard let attachment = sampleBuffer.frameAttachment,
               let statusRawValue = attachment[SCStreamFrameInfo.status] as? Int,
               let status = SCFrameStatus(rawValue: statusRawValue),
@@ -139,9 +156,12 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
             return
         }
 
-        let (geometry, frameHandler) = currentFrameState()
+        let (geometry, frameHandler, isFrameDeliveryEnabled, deliveryGeneration) =
+            currentFrameState()
         guard let geometry,
               let frameHandler,
+              isFrameDeliveryEnabled,
+              queuedFrame.deliveryGeneration == deliveryGeneration,
               ScrollingCaptureFrameGate.shouldProcess(
                 status: status,
                 pixelWidth: CVPixelBufferGetWidth(pixelBuffer),
@@ -183,6 +203,8 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
         processor = nil
         isStarting = false
         isStopping = false
+        isFrameDeliveryEnabled = false
+        deliveryGeneration &+= 1
         stateLock.unlock()
 
         if cancelProcessor {
@@ -205,7 +227,7 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
         geometry: ScrollingCaptureRegionGeometry,
         frameHandler: @escaping FrameHandler,
         failureHandler: @escaping FailureHandler,
-        processor: LatestValueProcessor<CMSampleBuffer>
+        processor: LatestValueProcessor<QueuedFrame>
     ) {
         stateLock.lock()
         self.stream = stream
@@ -214,6 +236,8 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
         self.failureHandler = failureHandler
         self.processor = processor
         isStarting = false
+        isFrameDeliveryEnabled = true
+        deliveryGeneration &+= 1
         stateLock.unlock()
     }
 
@@ -227,17 +251,23 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
 
     private func currentFrameState() -> (
         ScrollingCaptureRegionGeometry?,
-        FrameHandler?
+        FrameHandler?,
+        Bool,
+        UInt64
     ) {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return (geometry, frameHandler)
+        return (geometry, frameHandler, isFrameDeliveryEnabled, deliveryGeneration)
     }
 
-    private func currentProcessor() -> LatestValueProcessor<CMSampleBuffer>? {
+    private func currentSubmissionState() -> (
+        LatestValueProcessor<QueuedFrame>?,
+        isEnabled: Bool,
+        deliveryGeneration: UInt64
+    ) {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return processor
+        return (processor, isFrameDeliveryEnabled, deliveryGeneration)
     }
 
     private func failureState() -> (FailureHandler?, shouldNotify: Bool) {
@@ -255,7 +285,18 @@ nonisolated extension ScrollingCaptureFrameSource: SCStreamOutput {
     ) {
         guard outputType == .screen else { return }
 
-        currentProcessor()?.submit(sampleBuffer)
+        let submissionState = currentSubmissionState()
+        guard submissionState.isEnabled,
+              let processor = submissionState.0
+        else {
+            return
+        }
+        processor.submit(
+            QueuedFrame(
+                sampleBuffer: sampleBuffer,
+                deliveryGeneration: submissionState.deliveryGeneration
+            )
+        )
     }
 }
 

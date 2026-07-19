@@ -76,13 +76,15 @@ One final Core Graphics render → CaptureStore → Quick Access
 
 `ScrollingCaptureRegionResolver` converts an AppKit global selection into a pixel-aligned, display-local ScreenCaptureKit rectangle. It rejects cross-display selections and records exact native output dimensions, including Retina scaling and offset display layouts.
 
-`ScrollingCaptureFrameSource` owns the live `SCStream`. It excludes this app's windows, accepts only complete frames of the expected size, preserves ScreenCaptureKit metadata, and converts gated pixel buffers to `CGImage` off the callback queue. Its lifecycle is guarded against overlapping starts and suppresses failure reporting during an intentional stop.
+`ScrollingCaptureFrameSource` owns the live `SCStream`. It excludes this app's windows, accepts only complete frames of the expected size, preserves ScreenCaptureKit metadata, and converts gated pixel buffers to `CGImage` off the callback queue. Its lifecycle is guarded against overlapping starts and suppresses failure reporting during an intentional stop. Pause disables delivery before image conversion, and a delivery generation prevents a queued pre-pause frame from leaking into the resumed session.
 
 `LatestValueProcessor` provides bounded backpressure. While analysis is busy, it keeps only the newest pending frame, so capture latency and memory cannot grow with the stream duration.
 
-`ScrollingCaptureCoordinator` now connects selection, streaming, stitching, final rendering, storage, and Quick Access as one guarded lifecycle. It serializes finish/cancel/error completion, assembles the final bitmap off the main actor, preserves a valid partial capture after a stream or analysis failure when at least one frame exists, and ignores stale callbacks using a per-capture identity.
+`ScrollingCaptureCoordinator` now connects selection, streaming, stitching, bounded preview rendering, final rendering, storage, and Quick Access as one guarded lifecycle. It serializes pause/resume/finish/cancel/error completion, assembles the final bitmap off the main actor, preserves a valid partial capture after a stream or analysis failure when at least one frame exists, and ignores stale callbacks using a per-capture identity. Resume rebases registration on the first settled frame without appending duplicate rows.
 
-`ScrollingCaptureHUDManager` presents an app-excluded, non-activating panel next to the selected region. The HUD reports preparation, capture progress, native output dimensions, sustained low-confidence guidance, and finalization without taking keyboard focus away from the app being scrolled.
+`ScrollingCaptureHUDManager` presents an app-excluded, non-activating sidecar next to the selected region. The HUD shows a live mosaic preview, preparation and capture status, native output dimensions, sustained low-confidence guidance, Pause/Resume, Finish, Cancel, and finalization without taking keyboard focus away from the app being scrolled.
+
+`ScrollingCapturePreviewBuilder` incrementally updates a downsampled representation only when the compositor accepts new rows. Its decoded size is permanently capped at 240×280 pixels, so live feedback does not retain or repeatedly render the full-resolution output and duplicate/rejected frames do not trigger redundant UI work.
 
 The compositor keeps the initial viewport body plus only the newly revealed strip from each accepted frame. This avoids retaining duplicate frames and avoids repeatedly reallocating an ever-growing bitmap. A configured fixed header is retained from the first frame; a fixed footer is replaced and emitted from the final accepted frame.
 
@@ -106,10 +108,13 @@ Regression tests cover exact displacement, duplicate rejection, ambiguous conten
 - Keeps the first accepted frame immediately and shows “scroll a little slower” only after a sustained rejection streak.
 - Stops safely on output limits, analysis errors, stream failure, finish, or cancel; failures finalize a valid partial capture when possible.
 
-### 1. Live preview and capture controls
+### Completed: live preview and capture controls
 
-- Add a bounded, downsampled live mosaic preview without rendering the full output on every accepted frame.
-- Add pause/resume so users can interact with expandable sections without feeding transitional frames into registration.
+- Adds a bounded, downsampled live mosaic preview without rendering the full output on every accepted frame.
+- Adds Pause/Resume with source-level frame suppression and a safe registration rebase, so users can interact with expandable sections without feeding transitional frames into the mosaic.
+
+### 1. Recovery and keyboard controls
+
 - Add an optional, explicitly permissioned keyboard-control adapter for Finish/Cancel; keep HUD buttons as the universal path.
 - Surface “saved partial capture” distinctly from a normal finish when the stream ends unexpectedly.
 

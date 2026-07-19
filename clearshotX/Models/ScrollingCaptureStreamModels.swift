@@ -40,6 +40,7 @@ nonisolated protocol ScrollingCaptureFrameSourcing: AnyObject, Sendable {
     ) async throws -> ScrollingCaptureRegionGeometry
 
     func stop() async throws
+    func setFrameDeliveryEnabled(_ isEnabled: Bool)
 }
 
 nonisolated enum ScrollingCaptureFrameSourceError: LocalizedError, Equatable {

@@ -17,7 +17,7 @@ protocol ScrollingCaptureHUDPresenting: AnyObject {
 
 @MainActor
 final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
-    private let contentSize = NSSize(width: 560, height: 122)
+    private let contentSize = NSSize(width: 360, height: 430)
     private let edgeMargin: CGFloat = 12
     private var panel: NSPanel?
 
@@ -70,6 +70,20 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
             lhs.frame.intersection(region).area < rhs.frame.intersection(region).area
         } ?? NSScreen.main
         let visibleFrame = screen?.visibleFrame ?? region
+
+        let centeredY = min(
+            max(region.midY - contentSize.height / 2, visibleFrame.minY),
+            visibleFrame.maxY - contentSize.height
+        )
+        let rightX = region.maxX + edgeMargin
+        if rightX + contentSize.width <= visibleFrame.maxX {
+            return CGRect(origin: CGPoint(x: rightX, y: centeredY), size: contentSize)
+        }
+
+        let leftX = region.minX - edgeMargin - contentSize.width
+        if leftX >= visibleFrame.minX {
+            return CGRect(origin: CGPoint(x: leftX, y: centeredY), size: contentSize)
+        }
 
         let centeredX = min(
             max(region.midX - contentSize.width / 2, visibleFrame.minX),
