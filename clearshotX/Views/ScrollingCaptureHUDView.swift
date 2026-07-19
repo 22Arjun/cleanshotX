@@ -5,33 +5,8 @@
 
 import SwiftUI
 
-/// A chrome-free miniature of the captured document. The hosting panel is also
-/// transparent, so every visible pixel in this HUD belongs to the page itself.
-/// Capture controls live in their own panel and are intentionally kept separate.
-struct ScrollingCaptureHUDView: View {
-    @ObservedObject var viewModel: ScrollingCaptureHUDViewModel
-
-    var body: some View {
-        Group {
-            if let previewImage = viewModel.previewImage {
-                Image(decorative: previewImage, scale: 1)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-            } else {
-                Color.clear
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.smooth(duration: 0.18), value: previewAspectRatio)
-    }
-
-    private var previewAspectRatio: CGFloat {
-        guard let image = viewModel.previewImage, image.height > 0 else { return 1 }
-        return CGFloat(image.width) / CGFloat(image.height)
-    }
-}
-
+/// Capture controls remain SwiftUI-driven; the rapidly changing page bitmap is
+/// rendered directly by the layer-backed view in `ScrollingCaptureHUDManager`.
 struct ScrollingCaptureControlsView: View {
     @ObservedObject var viewModel: ScrollingCaptureHUDViewModel
 

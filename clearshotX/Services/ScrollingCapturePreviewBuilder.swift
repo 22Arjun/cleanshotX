@@ -258,7 +258,10 @@ nonisolated final class ScrollingCapturePreviewPipeline: @unchecked Sendable {
     private let contentInsets: ScrollingCaptureContentInsets
     private let publication: Publication
     private let minimumPublicationInterval: TimeInterval
-    private let maximumPendingRequestCount = 3
+    // One pending request plus the request currently being rendered is enough.
+    // Keeping a longer FIFO makes the HUD faithfully show old page states while
+    // the native capture has already moved on, which feels like capture latency.
+    private let maximumPendingRequestCount = 1
 
     private var pendingRequests: [Request] = []
     private var isDrainScheduled = false
@@ -272,7 +275,7 @@ nonisolated final class ScrollingCapturePreviewPipeline: @unchecked Sendable {
     init(
         maximumSize: CGSize = CGSize(width: 232, height: 420),
         contentInsets: ScrollingCaptureContentInsets,
-        maximumPublicationsPerSecond: Double = 20,
+        maximumPublicationsPerSecond: Double = 30,
         publication: @escaping Publication
     ) {
         builder = ScrollingCapturePreviewBuilder(
@@ -302,11 +305,9 @@ nonisolated final class ScrollingCapturePreviewPipeline: @unchecked Sendable {
             // native images even if the main display is temporarily busy.
             pendingRequests[pendingRequests.count - 1] = merged
         } else {
-            // Never retain an unbounded queue of native frames. If rendering fell
-            // more than one viewport behind, retain the last truthful queued page
-            // prefix. A later frame may still bridge the skipped progress; if it
-            // cannot, the miniature freezes rather than fabricating page pixels.
-            // The native compositor remains independent and pixel-exact.
+            // Retain the earlier bridge when the latest viewport cannot represent
+            // every missing row. The renderer will consume that bridge next; a
+            // subsequent submission can then catch up without fabricated pixels.
         }
 
         let shouldSchedule = !isDrainScheduled

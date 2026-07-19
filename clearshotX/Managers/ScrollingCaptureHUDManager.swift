@@ -27,6 +27,7 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
 
     private var frameWindows: [ScrollingCaptureFrameWindow] = []
     private var previewPanel: NSPanel?
+    private var previewImageView: ScrollingCapturePreviewImageView?
     private var controlsPanel: NSPanel?
     private var previewObservation: AnyCancellable?
 
@@ -42,9 +43,7 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
         let previewSize = NSSize(width: 1, height: 1)
         let previewPanel = makePanel(contentSize: previewSize)
         previewPanel.ignoresMouseEvents = true
-        let previewView = NSHostingView(
-            rootView: ScrollingCaptureHUDView(viewModel: viewModel)
-        )
+        let previewView = ScrollingCapturePreviewImageView(frame: .zero)
         previewView.frame = NSRect(origin: .zero, size: previewSize)
         previewView.autoresizingMask = [.width, .height]
         previewPanel.contentView = previewView
@@ -57,11 +56,13 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
         )
         previewPanel.orderFrontRegardless()
         self.previewPanel = previewPanel
+        previewImageView = previewView
 
         previewObservation = viewModel.$previewImage
             .compactMap { $0 }
-            .sink { [weak self, weak previewPanel] image in
-                guard let self, let previewPanel else { return }
+            .sink { [weak self, weak previewPanel, weak previewView] image in
+                guard let self, let previewPanel, let previewView else { return }
+                previewView.show(image)
                 self.resizePreviewPanel(
                     previewPanel,
                     for: image,
@@ -90,6 +91,7 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
         previewPanel?.orderOut(nil)
         previewPanel?.contentView = nil
         previewPanel = nil
+        previewImageView = nil
 
         controlsPanel?.orderOut(nil)
         controlsPanel?.contentView = nil
@@ -219,14 +221,15 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
             contentSize: contentSize
         )
 
-        // The first page appears immediately. Later accepted strips smoothly
-        // lengthen the miniature while its top edge remains visually anchored.
+        // The bitmap itself updates immediately. Animate only the small geometry
+        // delta, and finish before the next 30 fps preview can arrive; longer,
+        // overlapping animations make the miniature visibly trail the capture.
         guard panel.frame.width > 1.5, panel.frame.height > 1.5 else {
             panel.setFrame(targetFrame, display: true)
             return
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
+            context.duration = 0.03
             context.allowsImplicitAnimation = true
             panel.animator().setFrame(targetFrame, display: true)
         }
@@ -263,6 +266,30 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
     private func clamp(_ value: CGFloat, minimum: CGFloat, maximum: CGFloat) -> CGFloat {
         guard maximum >= minimum else { return minimum }
         return min(max(value, minimum), maximum)
+    }
+}
+
+/// The live page is a single rapidly changing bitmap. A layer-backed AppKit view
+/// avoids a SwiftUI layout/diff pass for every accepted strip and presents the new
+/// miniature with one Core Animation contents swap.
+private final class ScrollingCapturePreviewImageView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.contentsGravity = .resizeAspect
+        layer?.minificationFilter = .linear
+        layer?.magnificationFilter = .linear
+        layer?.masksToBounds = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func show(_ image: CGImage) {
+        layer?.contents = image
     }
 }
 

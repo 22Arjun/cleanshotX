@@ -44,7 +44,7 @@ final class ScrollingCaptureHUDViewModel: ObservableObject {
         pendingState = state
         guard statePublicationTask == nil else { return }
         statePublicationTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 80_000_000)
+            try? await Task.sleep(nanoseconds: 33_000_000)
             guard !Task.isCancelled, let self else { return }
             if let pendingState = self.pendingState {
                 self.state = pendingState
