@@ -14,7 +14,7 @@ nonisolated final class ScrollingCaptureSession {
 
     private let analyzer: ScrollingCaptureFrameAnalyzer
     private var compositor: ScrollingCaptureCompositor?
-    private var referenceFrame: CGImage?
+    private var referenceSize: CGSize?
     private var acceptedFrameCount = 0
     private var rejectedFrameCount = 0
     private var lastAlignment: ScrollingCaptureAlignment?
@@ -47,28 +47,36 @@ nonisolated final class ScrollingCaptureSession {
             throw ScrollingCaptureError.invalidConfiguration
         }
 
-        guard let referenceFrame else {
+        guard let referenceSize else {
             compositor = try ScrollingCaptureCompositor(
                 firstFrame: frame,
                 contentInsets: configuration.contentInsets
             )
-            self.referenceFrame = frame
+            guard analyzer.setReference(frame) else {
+                compositor = nil
+                throw ScrollingCaptureError.imageCreationFailed
+            }
+            self.referenceSize = CGSize(width: frame.width, height: frame.height)
             acceptedFrameCount = 1
             return .started(progress())
         }
 
-        guard referenceFrame.width == frame.width, referenceFrame.height == frame.height else {
+        guard Int(referenceSize.width) == frame.width,
+              Int(referenceSize.height) == frame.height
+        else {
             throw ScrollingCaptureError.inconsistentFrameSize(
-                expected: CGSize(width: referenceFrame.width, height: referenceFrame.height),
+                expected: referenceSize,
                 actual: CGSize(width: frame.width, height: frame.height)
             )
         }
 
-        switch analyzer.analyze(previous: referenceFrame, current: frame) {
+        switch analyzer.analyze(current: frame) {
         case .duplicate:
+            analyzer.discardCandidate()
             return .duplicate(progress())
 
         case let .rejected(reason):
+            analyzer.discardCandidate()
             rejectedFrameCount += 1
             return .rejected(reason, progress())
 
@@ -83,11 +91,12 @@ nonisolated final class ScrollingCaptureSession {
                   !proposedPixelCount.overflow,
                   proposedPixelCount.partialValue <= configuration.maximumOutputPixelCount
             else {
+                analyzer.discardCandidate()
                 return .reachedOutputLimit(progress())
             }
 
             try compositor.append(frame: frame, verticalOffset: alignment.verticalOffset)
-            self.referenceFrame = frame
+            analyzer.acceptCandidateAsReference()
             acceptedFrameCount += 1
             lastAlignment = alignment
             return .appended(progress())
@@ -104,19 +113,21 @@ nonisolated final class ScrollingCaptureSession {
     /// Replaces the registration reference without adding output rows. This lets a
     /// paused capture ignore transitional UI and continue from the settled viewport.
     func rebase(_ frame: CGImage) throws -> ScrollingCaptureFrameDecision {
-        guard let referenceFrame, compositor != nil else {
+        guard let referenceSize, compositor != nil else {
             return try ingest(frame)
         }
-        guard referenceFrame.width == frame.width,
-              referenceFrame.height == frame.height
+        guard Int(referenceSize.width) == frame.width,
+              Int(referenceSize.height) == frame.height
         else {
             throw ScrollingCaptureError.inconsistentFrameSize(
-                expected: CGSize(width: referenceFrame.width, height: referenceFrame.height),
+                expected: referenceSize,
                 actual: CGSize(width: frame.width, height: frame.height)
             )
         }
 
-        self.referenceFrame = frame
+        guard analyzer.setReference(frame) else {
+            throw ScrollingCaptureError.imageCreationFailed
+        }
         try compositor?.replaceFooter(from: frame)
         return .rebased(progress())
     }

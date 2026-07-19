@@ -10,8 +10,15 @@ import Foundation
 /// scrolling capture: content moves vertically while the selected viewport is fixed.
 /// Constraining the problem to one axis is both faster and more reliable than a
 /// general panorama/homography stitcher for text-heavy interfaces.
-nonisolated struct ScrollingCaptureFrameAnalyzer {
+nonisolated final class ScrollingCaptureFrameAnalyzer {
     let configuration: ScrollingCaptureConfiguration
+
+    private var referencePlane: LumaPlane?
+    private var candidatePlane: LumaPlane?
+
+    init(configuration: ScrollingCaptureConfiguration) {
+        self.configuration = configuration
+    }
 
     func analyze(previous: CGImage, current: CGImage) -> ScrollingCaptureAnalysisResult {
         guard previous.width == current.width,
@@ -31,6 +38,62 @@ nonisolated struct ScrollingCaptureFrameAnalyzer {
         else {
             return .rejected(.invalidFrame)
         }
+
+        return analyze(previous: previousPlane, current: currentPlane)
+    }
+
+    /// Prepares one downsampled registration reference. The session keeps this
+    /// small luma plane instead of retaining and reconverting a native-size frame.
+    @discardableResult
+    func setReference(_ image: CGImage) -> Bool {
+        guard let plane = makePlane(image) else {
+            referencePlane = nil
+            candidatePlane = nil
+            return false
+        }
+        referencePlane = plane
+        candidatePlane = nil
+        return true
+    }
+
+    /// Converts only the new candidate. Accepted candidates can be promoted to the
+    /// next reference without another Core Graphics downsample pass.
+    func analyze(current: CGImage) -> ScrollingCaptureAnalysisResult {
+        guard let previousPlane = referencePlane,
+              let currentPlane = makePlane(current),
+              previousPlane.width == currentPlane.width,
+              previousPlane.height == currentPlane.height
+        else {
+            candidatePlane = nil
+            return .rejected(.invalidFrame)
+        }
+        candidatePlane = currentPlane
+        return analyze(previous: previousPlane, current: currentPlane)
+    }
+
+    func acceptCandidateAsReference() {
+        if let candidatePlane {
+            referencePlane = candidatePlane
+        }
+        self.candidatePlane = nil
+    }
+
+    func discardCandidate() {
+        candidatePlane = nil
+    }
+
+    private func makePlane(_ image: CGImage) -> LumaPlane? {
+        LumaPlane(
+            image: image,
+            maximumWidth: configuration.maximumAnalysisWidth,
+            maximumHeight: configuration.maximumAnalysisHeight
+        )
+    }
+
+    private func analyze(
+        previous previousPlane: LumaPlane,
+        current currentPlane: LumaPlane
+    ) -> ScrollingCaptureAnalysisResult {
 
         let topInset = min(
             previousPlane.height,

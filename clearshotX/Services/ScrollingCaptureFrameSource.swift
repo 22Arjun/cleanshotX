@@ -92,7 +92,10 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
             configuration.width = geometry.pixelWidth
             configuration.height = geometry.pixelHeight
             configuration.pixelFormat = kCVPixelFormatType_32BGRA
-            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 15)
+            // Native-resolution output is never scaled down. A 30 fps acquisition
+            // cadence keeps adjacent frames overlapping even during quick trackpad
+            // movement; latest-wins backpressure still bounds analysis to one frame.
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
             configuration.queueDepth = 3
             configuration.showsCursor = false
             configuration.scalesToFit = false

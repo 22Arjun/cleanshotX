@@ -36,6 +36,7 @@ final class AppShellViewModel: ObservableObject {
     private let editorWindowManager: EditorWindowManager
     private let quickAccessOverlayManager: QuickAccessOverlayManager
     private let regionSelectionManager: RegionSelectionManager
+    private let scrollingCaptureRegionSelector: ScrollingCaptureRegionSelecting
     private let scrollingCaptureCoordinator: ScrollingCaptureCoordinator
     private let windowSelectionManager: WindowSelectionManager
     private let hotkeyConflictResolutionManager: HotkeyConflictResolutionManager
@@ -59,6 +60,7 @@ final class AppShellViewModel: ObservableObject {
         editorWindowManager: EditorWindowManager? = nil,
         quickAccessOverlayManager: QuickAccessOverlayManager? = nil,
         regionSelectionManager: RegionSelectionManager? = nil,
+        scrollingCaptureRegionSelector: ScrollingCaptureRegionSelecting? = nil,
         scrollingCaptureCoordinator: ScrollingCaptureCoordinator? = nil,
         windowSelectionManager: WindowSelectionManager? = nil,
         hotkeyConflictResolutionManager: HotkeyConflictResolutionManager? = nil,
@@ -96,6 +98,8 @@ final class AppShellViewModel: ObservableObject {
             captureStore: resolvedCaptureStore
         )
         self.regionSelectionManager = regionSelectionManager ?? RegionSelectionManager()
+        self.scrollingCaptureRegionSelector = scrollingCaptureRegionSelector
+            ?? ScrollingCaptureRegionSelectionManager()
         self.scrollingCaptureCoordinator = scrollingCaptureCoordinator
             ?? ScrollingCaptureCoordinator(captureStore: resolvedCaptureStore)
         self.windowSelectionManager = windowSelectionManager ?? WindowSelectionManager()
@@ -242,19 +246,14 @@ final class AppShellViewModel: ObservableObject {
         isCapturing = true
         Task {
             do {
-                guard let selection = try await regionSelectionManager.selectRegion(
-                    magnifierMode: regionMagnifierMode,
-                    magnifierZoom: regionMagnifierZoom,
-                    magnifierSize: regionMagnifierSize,
-                    magnifierShowsPixelColor: regionMagnifierShowsPixelColor,
-                    freezesScreen: false
-                ) else {
+                guard let selectedRegion = await scrollingCaptureRegionSelector.selectRegion()
+                else {
                     isCapturing = false
                     return
                 }
 
                 try await scrollingCaptureCoordinator.start(
-                    selectedRegion: selection.region
+                    selectedRegion: selectedRegion
                 ) { [weak self] result in
                     guard let self else { return }
                     self.isCapturing = false
@@ -268,7 +267,9 @@ final class AppShellViewModel: ObservableObject {
                         self.handleCaptureError(error)
                     }
                 }
+                scrollingCaptureRegionSelector.dismissSelectionOverlay()
             } catch {
+                scrollingCaptureRegionSelector.dismissSelectionOverlay()
                 isCapturing = false
                 handleCaptureError(error)
             }

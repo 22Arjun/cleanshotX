@@ -6,7 +6,7 @@ ClearshotX should treat scrolling capture as a **pixel-streaming document mosaic
 
 For arbitrary macOS apps there is no public API that returns the off-screen contents or scroll position of another app. The dependable cross-app path is therefore:
 
-1. Let the user select a fixed viewport inside one display.
+1. Let the user draw, resize, move, and explicitly confirm a fixed viewport inside one display.
 2. Stream that rectangle with ScreenCaptureKit while the user scrolls naturally.
 3. Select useful keyframes and reject duplicates, animation, resize, and low-confidence matches.
 4. Estimate the one-dimensional vertical displacement between accepted frames.
@@ -76,15 +76,19 @@ One final Core Graphics render → CaptureStore → Quick Access
 
 `ScrollingCaptureRegionResolver` converts an AppKit global selection into a pixel-aligned, display-local ScreenCaptureKit rectangle. It rejects cross-display selections and records exact native output dimensions, including Retina scaling and offset display layouts.
 
-`ScrollingCaptureFrameSource` owns the live `SCStream`. It excludes this app's windows, accepts only complete frames of the expected size, preserves ScreenCaptureKit metadata, and converts gated pixel buffers to `CGImage` off the callback queue. Its lifecycle is guarded against overlapping starts and suppresses failure reporting during an intentional stop. Pause disables delivery before image conversion, and a delivery generation prevents a queued pre-pause frame from leaking into the resumed session.
+`ScrollingCaptureFrameSource` owns the live `SCStream`. It excludes this app's windows, accepts only complete frames of the expected native pixel size, preserves ScreenCaptureKit metadata, and converts gated pixel buffers to `CGImage` off the callback queue. A 30 fps acquisition cadence preserves adjacent overlap during quick trackpad movement while latest-wins backpressure prevents a stale frame queue. Its lifecycle is guarded against overlapping starts and suppresses failure reporting during an intentional stop. Pause disables delivery before image conversion, and a delivery generation prevents a queued pre-pause frame from leaking into the resumed session.
 
 `LatestValueProcessor` provides bounded backpressure. While analysis is busy, it keeps only the newest pending frame, so capture latency and memory cannot grow with the stream duration.
 
 `ScrollingCaptureCoordinator` now connects selection, streaming, stitching, bounded preview rendering, final rendering, storage, and Quick Access as one guarded lifecycle. It serializes pause/resume/finish/cancel/error completion, assembles the final bitmap off the main actor, preserves a valid partial capture after a stream or analysis failure when at least one frame exists, and ignores stale callbacks using a per-capture identity. Resume rebases registration on the first settled frame without appending duplicate rows.
 
-`ScrollingCaptureHUDManager` presents an app-excluded, non-activating sidecar next to the selected region. The HUD shows a live mosaic preview, preparation and capture status, native output dimensions, sustained low-confidence guidance, Pause/Resume, Finish, Cancel, and finalization without taking keyboard focus away from the app being scrolled.
+`ScrollingCaptureRegionSelectionManager` is intentionally separate from ordinary Region Capture. Mouse-up preserves the selection instead of committing it; eight resize targets, whole-frame movement, keyboard nudging, native-pixel dimensions, and explicit Start/Cancel controls remain available until confirmation. The target app is restored to the foreground before streaming begins, and the locked selection overlay overlaps handoff to the live capture UI so the frame never flashes away.
 
-`ScrollingCapturePreviewBuilder` incrementally updates a downsampled representation only when the compositor accepts new rows. Its decoded size is permanently capped at 240×280 pixels, so live feedback does not retain or repeatedly render the full-resolution output and duplicate/rejected frames do not trigger redundant UI work.
+`ScrollingCaptureHUDManager` presents an app-excluded, non-activating experience around the selected region: the crop frame remains visible, the desktop outside it stays dimmed, a narrow live-result sidecar grows independently, and compact Cancel/Pause/Done controls remain anchored to the selection. None of these surfaces enter the ScreenCaptureKit stream or take scrolling focus from the target app.
+
+`ScrollingCapturePreviewBuilder` incrementally updates a downsampled representation only when the compositor accepts new rows. Its decoded size is permanently capped at 240×280 pixels, so live feedback does not retain or repeatedly render the full-resolution output and duplicate/rejected frames do not trigger redundant UI work. Preview resolution is therefore independent from output resolution: accepted strips are always cropped and composed from native ScreenCaptureKit frames without rescaling.
+
+`ScrollingCaptureFrameAnalyzer` caches the accepted reference as a small luma plane. Each incoming frame is downsampled once for registration and an accepted candidate is promoted without reconverting the previous native frame. The compositor still receives the untouched native image, reducing analysis work without trading away output detail.
 
 The compositor keeps the initial viewport body plus only the newly revealed strip from each accepted frame. This avoids retaining duplicate frames and avoids repeatedly reallocating an ever-growing bitmap. A configured fixed header is retained from the first frame; a fixed footer is replaced and emitted from the final accepted frame.
 
