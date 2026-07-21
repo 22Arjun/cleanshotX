@@ -12,30 +12,48 @@ struct ScrollingCaptureControlsView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Button {
-                viewModel.cancel()
-            } label: {
-                Label("Cancel", systemImage: "xmark")
-            }
-            .buttonStyle(ScrollingCapturePillButtonStyle(emphasized: false))
+            if viewModel.state.canStartAutoScroll {
+                Button {
+                    viewModel.startManualScroll()
+                } label: {
+                    Label("Manual Scroll", systemImage: "hand.draw.fill")
+                }
+                .buttonStyle(ScrollingCapturePillButtonStyle(emphasized: false))
+                .help("Capture while you scroll manually")
 
-            Button {
-                viewModel.togglePause()
-            } label: {
-                Image(systemName: viewModel.state.phase == .paused ? "play.fill" : "pause.fill")
-                    .frame(width: 12, height: 12)
-            }
-            .buttonStyle(ScrollingCapturePillButtonStyle(emphasized: false))
-            .disabled(!viewModel.state.canPause)
-            .help(viewModel.state.pauseButtonTitle)
+                Button {
+                    viewModel.startAutoScroll()
+                } label: {
+                    Label("Auto Scroll", systemImage: "arrow.down.circle.fill")
+                }
+                .buttonStyle(ScrollingCapturePillButtonStyle(emphasized: true))
+                .help("Start automatic scrolling")
+            } else {
+                Button {
+                    viewModel.cancel()
+                } label: {
+                    Label("Cancel", systemImage: "xmark")
+                }
+                .buttonStyle(ScrollingCapturePillButtonStyle(emphasized: false))
 
-            Button {
-                viewModel.finish()
-            } label: {
-                Label("Done", systemImage: "checkmark")
+                Button {
+                    viewModel.togglePause()
+                } label: {
+                    Image(systemName: viewModel.state.phase == .paused ? "play.fill" : "pause.fill")
+                        .frame(width: 12, height: 12)
+                }
+                .buttonStyle(ScrollingCapturePillButtonStyle(emphasized: false))
+                .disabled(!viewModel.state.canPause)
+                .help(viewModel.state.pauseButtonTitle)
+
+                Button {
+                    viewModel.finish()
+                } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                }
+                .buttonStyle(ScrollingCapturePillButtonStyle(emphasized: true))
+                .disabled(!viewModel.state.canFinish)
             }
-            .buttonStyle(ScrollingCapturePillButtonStyle(emphasized: true))
-            .disabled(!viewModel.state.canFinish)
         }
         .padding(6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

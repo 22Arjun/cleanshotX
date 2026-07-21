@@ -14,6 +14,7 @@ final class ScrollingCaptureCoordinator {
     enum Phase: Equatable {
         case idle
         case starting
+        case ready
         case capturing
         case paused
         case finishing
@@ -27,11 +28,13 @@ final class ScrollingCaptureCoordinator {
     private let captureStore: CaptureStoring
     private let hudPresenter: ScrollingCaptureHUDPresenting
     private let configuration: ScrollingCaptureConfiguration
+    private let postEventAccessProvider: () -> Bool
 
     private var activeCaptureID: UUID?
     private var selectedRegion: CGRect?
     private var geometry: ScrollingCaptureRegionGeometry?
     private var worker: ScrollingCaptureWorker?
+    private var activeMode: ScrollingCaptureMode?
     private var completion: Completion?
     private var hudViewModel: ScrollingCaptureHUDViewModel?
     private var hudState: ScrollingCaptureHUDState = .starting
@@ -43,7 +46,10 @@ final class ScrollingCaptureCoordinator {
         usesAutomaticCapture: Bool = true,
         captureStore: CaptureStoring? = nil,
         hudPresenter: ScrollingCaptureHUDPresenting? = nil,
-        configuration: ScrollingCaptureConfiguration = ScrollingCaptureConfiguration()
+        configuration: ScrollingCaptureConfiguration = ScrollingCaptureConfiguration(),
+        postEventAccessProvider: @escaping () -> Bool = {
+            CGPreflightPostEventAccess() || CGRequestPostEventAccess()
+        }
     ) {
         self.frameSource = frameSource
         self.autoCapture = usesAutomaticCapture
@@ -54,6 +60,7 @@ final class ScrollingCaptureCoordinator {
         self.captureStore = captureStore ?? CaptureStore()
         self.hudPresenter = hudPresenter ?? ScrollingCaptureHUDManager()
         self.configuration = configuration
+        self.postEventAccessProvider = postEventAccessProvider
     }
 
     func start(
@@ -65,24 +72,18 @@ final class ScrollingCaptureCoordinator {
         }
 
         let captureID = UUID()
-        let worker = autoCapture == nil ? ScrollingCaptureWorker(
-            configuration: configuration,
-            previewPublication: { [weak self] image in
-                Task { @MainActor [weak self] in
-                    guard self?.activeCaptureID == captureID else { return }
-                    self?.hudViewModel?.updatePreview(image)
-                }
-            }
-        ) : nil
         let hudViewModel = ScrollingCaptureHUDViewModel(
             finish: { [weak self] in self?.finish() },
             cancel: { [weak self] in self?.cancel() },
-            togglePause: { [weak self] in self?.togglePause() }
+            togglePause: { [weak self] in self?.togglePause() },
+            startAutoScroll: { [weak self] in self?.startAutoScroll() },
+            startManualScroll: { [weak self] in self?.startManualScroll() }
         )
 
         activeCaptureID = captureID
         self.selectedRegion = selectedRegion
-        self.worker = worker
+        worker = nil
+        activeMode = nil
         self.completion = completion
         self.hudViewModel = hudViewModel
         hudState = .starting
@@ -91,7 +92,77 @@ final class ScrollingCaptureCoordinator {
         hudPresenter.show(viewModel: hudViewModel, adjacentTo: selectedRegion)
 
         do {
-            if let autoCapture {
+            if autoCapture != nil {
+                phase = .ready
+                hudState.phase = .ready
+                hudViewModel.update(hudState)
+                return
+            }
+
+            try await beginManualCapture(
+                selectedRegion: selectedRegion,
+                captureID: captureID
+            )
+        } catch {
+            guard activeCaptureID == captureID else { return }
+            reset()
+            throw error
+        }
+    }
+
+    func startManualScroll() {
+        guard phase == .ready,
+              let selectedRegion,
+              let captureID = activeCaptureID
+        else {
+            return
+        }
+
+        phase = .starting
+        hudState.phase = .starting
+        hudState.mode = .manual
+        hudViewModel?.update(hudState)
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.beginManualCapture(
+                    selectedRegion: selectedRegion,
+                    captureID: captureID
+                )
+            } catch {
+                guard self.activeCaptureID == captureID else { return }
+                self.complete(.failure(error), captureID: captureID)
+            }
+        }
+    }
+
+    func startAutoScroll() {
+        guard phase == .ready,
+              let autoCapture,
+              let selectedRegion,
+              let captureID = activeCaptureID
+        else {
+            return
+        }
+
+        activeMode = .automatic
+        guard postEventAccessProvider() else {
+            complete(
+                .failure(ScrollingCaptureAutoCaptureError.postEventPermissionDenied),
+                captureID: captureID
+            )
+            return
+        }
+
+        phase = .starting
+        hudState.phase = .starting
+        hudState.mode = .automatic
+        hudViewModel?.update(hudState)
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
                 let geometry = try await autoCapture.start(
                     selectedRegion: selectedRegion,
                     onProgress: { [weak self] decision in
@@ -111,51 +182,66 @@ final class ScrollingCaptureCoordinator {
                         }
                     }
                 )
-                guard activeCaptureID == captureID else {
+                guard self.activeCaptureID == captureID else {
                     autoCapture.cancel()
                     return
                 }
                 self.geometry = geometry
-                phase = .capturing
-                hudState.phase = .capturing
-                hudViewModel.update(hudState)
-                return
+                self.phase = .capturing
+                self.hudState.phase = .capturing
+                self.hudViewModel?.update(self.hudState)
+            } catch {
+                guard self.activeCaptureID == captureID else { return }
+                self.complete(.failure(error), captureID: captureID)
             }
-
-            guard let worker else {
-                throw ScrollingCaptureAutoCaptureError.notPrepared
-            }
-            let geometry = try await frameSource.start(
-                selectedRegion: selectedRegion,
-                onFrame: { [weak self, weak worker] frame in
-                    guard let worker,
-                          let result = worker.ingest(frame.image)
-                    else {
-                        return
-                    }
-                    Task { @MainActor [weak self] in
-                        self?.handle(result, captureID: captureID)
-                    }
-                },
-                onFailure: { [weak self] error in
-                    Task { @MainActor [weak self] in
-                        self?.handleSourceFailure(error, captureID: captureID)
-                    }
-                }
-            )
-
-            guard activeCaptureID == captureID else {
-                try? await frameSource.stop()
-                return
-            }
-
-            self.geometry = geometry
-            phase = .capturing
-        } catch {
-            guard activeCaptureID == captureID else { return }
-            reset()
-            throw error
         }
+    }
+
+    private func beginManualCapture(
+        selectedRegion: CGRect,
+        captureID: UUID
+    ) async throws {
+        let worker = ScrollingCaptureWorker(
+            configuration: configuration,
+            previewPublication: { [weak self] image in
+                Task { @MainActor [weak self] in
+                    guard self?.activeCaptureID == captureID else { return }
+                    self?.hudViewModel?.updatePreview(image)
+                }
+            }
+        )
+        self.worker = worker
+        activeMode = .manual
+        hudState.mode = .manual
+
+        let geometry = try await frameSource.start(
+            selectedRegion: selectedRegion,
+            onFrame: { [weak self, weak worker] frame in
+                guard let worker,
+                      let result = worker.ingest(frame.image)
+                else {
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    self?.handle(result, captureID: captureID)
+                }
+            },
+            onFailure: { [weak self] error in
+                Task { @MainActor [weak self] in
+                    self?.handleSourceFailure(error, captureID: captureID)
+                }
+            }
+        )
+
+        guard activeCaptureID == captureID else {
+            try? await frameSource.stop()
+            return
+        }
+
+        self.geometry = geometry
+        phase = .capturing
+        hudState.phase = .capturing
+        hudViewModel?.update(hudState)
     }
 
     func finish() {
@@ -164,7 +250,7 @@ final class ScrollingCaptureCoordinator {
         else {
             return
         }
-        if let autoCapture {
+        if activeMode == .automatic, let autoCapture {
             phase = .finishing
             hudState.phase = .finishing
             hudViewModel?.update(hudState)
@@ -182,12 +268,18 @@ final class ScrollingCaptureCoordinator {
             return
         }
 
+        let wasReady = phase == .ready
         phase = .cancelling
-        if let autoCapture {
+        if wasReady {
+            complete(.success(nil), captureID: captureID)
+            return
+        }
+
+        if activeMode == .automatic, let autoCapture {
             autoCapture.cancel()
             return
         }
-        guard let worker else {
+        guard activeMode == .manual, let worker else {
             complete(.success(nil), captureID: captureID)
             return
         }
@@ -201,7 +293,7 @@ final class ScrollingCaptureCoordinator {
     }
 
     func togglePause() {
-        if let autoCapture {
+        if activeMode == .automatic, let autoCapture {
             switch phase {
             case .capturing:
                 autoCapture.setPaused(true)
@@ -219,7 +311,7 @@ final class ScrollingCaptureCoordinator {
             return
         }
 
-        guard let worker else { return }
+        guard activeMode == .manual, let worker else { return }
 
         switch phase {
         case .capturing:
@@ -246,6 +338,7 @@ final class ScrollingCaptureCoordinator {
         captureID: UUID
     ) {
         guard activeCaptureID == captureID,
+              activeMode == .manual,
               phase == .capturing || phase == .starting
         else {
             return
@@ -285,6 +378,7 @@ final class ScrollingCaptureCoordinator {
         captureID: UUID
     ) {
         guard activeCaptureID == captureID,
+              activeMode == .automatic,
               phase == .starting || phase == .capturing || phase == .paused else {
             return
         }
@@ -414,6 +508,7 @@ final class ScrollingCaptureCoordinator {
         selectedRegion = nil
         geometry = nil
         worker = nil
+        activeMode = nil
         completion = nil
         hudViewModel = nil
         hudState = .starting

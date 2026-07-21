@@ -243,13 +243,6 @@ final class AppShellViewModel: ObservableObject {
             }
         }
 
-        guard CGPreflightPostEventAccess() || CGRequestPostEventAccess() else {
-            handleCaptureError(
-                ScrollingCaptureAutoCaptureError.postEventPermissionDenied
-            )
-            return
-        }
-
         isCapturing = true
         Task {
             do {

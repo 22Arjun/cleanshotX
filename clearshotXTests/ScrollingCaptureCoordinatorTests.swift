@@ -191,6 +191,164 @@ final class ScrollingCapturePreviewBuilderTests: XCTestCase {
 
 @MainActor
 final class ScrollingCaptureCoordinatorTests: XCTestCase {
+    func testAutomaticCaptureWaitsForExplicitStartButton() async throws {
+        let autoCapture = FakeAutoCapture()
+        let hud = FakeScrollingHUDPresenter()
+        let coordinator = ScrollingCaptureCoordinator(
+            autoCapture: autoCapture,
+            captureStore: FakeCaptureStore(),
+            hudPresenter: hud,
+            postEventAccessProvider: { true }
+        )
+        let started = expectation(description: "Auto capture started")
+        let completed = expectation(description: "Started capture cancelled")
+        autoCapture.onStart = {
+            started.fulfill()
+        }
+
+        try await coordinator.start(
+            selectedRegion: CGRect(x: 10, y: 20, width: 300, height: 200)
+        ) { _ in
+            completed.fulfill()
+        }
+
+        XCTAssertEqual(coordinator.phase, .ready)
+        XCTAssertEqual(hud.viewModel?.state.phase, .ready)
+        XCTAssertEqual(autoCapture.startCount, 0)
+
+        hud.viewModel?.startAutoScroll()
+        await fulfillment(of: [started], timeout: 2)
+        await Task.yield()
+
+        XCTAssertEqual(autoCapture.startCount, 1)
+        XCTAssertEqual(coordinator.phase, .capturing)
+
+        coordinator.cancel()
+        await fulfillment(of: [completed], timeout: 2)
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testCancelBeforeAutoScrollStartsDismissesWithoutStartingCapture() async throws {
+        let autoCapture = FakeAutoCapture()
+        let hud = FakeScrollingHUDPresenter()
+        let coordinator = ScrollingCaptureCoordinator(
+            autoCapture: autoCapture,
+            captureStore: FakeCaptureStore(),
+            hudPresenter: hud,
+            postEventAccessProvider: { true }
+        )
+        let completed = expectation(description: "Ready capture cancelled")
+        var receivedCapture: CaptureResult?
+
+        try await coordinator.start(
+            selectedRegion: CGRect(x: 10, y: 20, width: 300, height: 200)
+        ) { result in
+            if case let .success(capture) = result {
+                receivedCapture = capture
+            }
+            completed.fulfill()
+        }
+
+        hud.viewModel?.cancel()
+        await fulfillment(of: [completed], timeout: 2)
+
+        XCTAssertNil(receivedCapture)
+        XCTAssertEqual(autoCapture.startCount, 0)
+        XCTAssertEqual(hud.dismissCount, 1)
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testManualScrollCanBeChosenWhenAutoScrollIsAvailable() async throws {
+        let source = FakeScrollingFrameSource()
+        let autoCapture = FakeAutoCapture()
+        let hud = FakeScrollingHUDPresenter()
+        let store = FakeCaptureStore()
+        let coordinator = ScrollingCaptureCoordinator(
+            frameSource: source,
+            autoCapture: autoCapture,
+            captureStore: store,
+            hudPresenter: hud,
+            postEventAccessProvider: { true }
+        )
+        let started = expectation(description: "Manual source started")
+        let completed = expectation(description: "Manual capture finished")
+        var receivedResult: Result<CaptureResult?, Error>?
+        source.onStart = {
+            started.fulfill()
+        }
+
+        try await coordinator.start(
+            selectedRegion: CGRect(x: 10, y: 20, width: 4, height: 3)
+        ) { result in
+            receivedResult = result
+            completed.fulfill()
+        }
+
+        XCTAssertEqual(coordinator.phase, .ready)
+        XCTAssertEqual(source.startCount, 0)
+        XCTAssertEqual(autoCapture.startCount, 0)
+
+        hud.viewModel?.startManualScroll()
+        await fulfillment(of: [started], timeout: 2)
+        await Task.yield()
+
+        XCTAssertEqual(coordinator.phase, .capturing)
+        XCTAssertEqual(source.startCount, 1)
+        XCTAssertEqual(autoCapture.startCount, 0)
+
+        source.emit(image: makeSolidImage(width: 4, height: 3))
+        await Task.yield()
+        XCTAssertEqual(hud.viewModel?.state.mode, .manual)
+        XCTAssertEqual(hud.viewModel?.state.acceptedFrameCount, 1)
+
+        coordinator.finish()
+        await fulfillment(of: [completed], timeout: 2)
+
+        guard case let .success(capture?) = receivedResult else {
+            return XCTFail("Expected a stored manual capture")
+        }
+        XCTAssertEqual(capture.pixelWidth, 4)
+        XCTAssertEqual(capture.pixelHeight, 3)
+        XCTAssertEqual(store.storeCount, 1)
+        XCTAssertEqual(source.stopCount, 1)
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testAutoScrollPermissionIsRequestedOnlyWhenStartButtonIsPressed() async throws {
+        let autoCapture = FakeAutoCapture()
+        let hud = FakeScrollingHUDPresenter()
+        let coordinator = ScrollingCaptureCoordinator(
+            autoCapture: autoCapture,
+            captureStore: FakeCaptureStore(),
+            hudPresenter: hud,
+            postEventAccessProvider: { false }
+        )
+        let completed = expectation(description: "Permission denied")
+        var receivedError: Error?
+
+        try await coordinator.start(
+            selectedRegion: CGRect(x: 10, y: 20, width: 300, height: 200)
+        ) { result in
+            if case let .failure(error) = result {
+                receivedError = error
+            }
+            completed.fulfill()
+        }
+
+        XCTAssertEqual(coordinator.phase, .ready)
+        XCTAssertEqual(autoCapture.startCount, 0)
+
+        hud.viewModel?.startAutoScroll()
+        await fulfillment(of: [completed], timeout: 2)
+
+        XCTAssertEqual(
+            receivedError as? ScrollingCaptureAutoCaptureError,
+            .postEventPermissionDenied
+        )
+        XCTAssertEqual(autoCapture.startCount, 0)
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
     func testCancelStopsSourceDismissesHUDAndReturnsNoCapture() async throws {
         let source = FakeScrollingFrameSource()
         let hud = FakeScrollingHUDPresenter()
@@ -272,7 +430,15 @@ private nonisolated final class FakeScrollingFrameSource:
 {
     private let lock = NSLock()
     private var frameHandler: (@Sendable (ScrollingCaptureStreamFrame) -> Void)?
+    private var starts = 0
     private var stops = 0
+    var onStart: (() -> Void)?
+
+    var startCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return starts
+    }
 
     var stopCount: Int {
         lock.lock()
@@ -286,6 +452,7 @@ private nonisolated final class FakeScrollingFrameSource:
         onFailure: @escaping @Sendable (Error) -> Void
     ) async throws -> ScrollingCaptureRegionGeometry {
         setFrameHandler(onFrame)
+        recordStart()
         return ScrollingCaptureRegionGeometry(
             displayID: 1,
             displayFrame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
@@ -311,6 +478,14 @@ private nonisolated final class FakeScrollingFrameSource:
         lock.unlock()
     }
 
+    private func recordStart() {
+        lock.lock()
+        starts += 1
+        let onStart = self.onStart
+        lock.unlock()
+        onStart?()
+    }
+
     private func recordStop() {
         lock.lock()
         stops += 1
@@ -331,6 +506,65 @@ private nonisolated final class FakeScrollingFrameSource:
                 scaleFactor: 1
             )
         )
+    }
+}
+
+private nonisolated final class FakeAutoCapture:
+    ScrollingCaptureAutoCapturing,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var starts = 0
+    private var completion: CompletionHandler?
+    var onStart: (() -> Void)?
+
+    var startCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return starts
+    }
+
+    func start(
+        selectedRegion: CGRect,
+        onProgress: @escaping ProgressHandler,
+        onPreview: @escaping PreviewHandler,
+        onCompletion: @escaping CompletionHandler
+    ) async throws -> ScrollingCaptureRegionGeometry {
+        recordStart(onCompletion)
+        return ScrollingCaptureRegionGeometry(
+            displayID: 1,
+            displayFrame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+            globalRect: selectedRegion,
+            sourceRect: selectedRegion,
+            pointPixelScale: 1,
+            pixelWidth: Int(selectedRegion.width),
+            pixelHeight: Int(selectedRegion.height)
+        )
+    }
+
+    func setPaused(_ isPaused: Bool) {}
+    func finish() {}
+
+    func cancel() {
+        let completion = takeCompletion()
+        completion?(.success(nil))
+    }
+
+    private func recordStart(_ completion: @escaping CompletionHandler) {
+        lock.lock()
+        starts += 1
+        self.completion = completion
+        let onStart = self.onStart
+        lock.unlock()
+        onStart?()
+    }
+
+    private func takeCompletion() -> CompletionHandler? {
+        lock.lock()
+        defer { lock.unlock() }
+        let completion = self.completion
+        self.completion = nil
+        return completion
     }
 }
 

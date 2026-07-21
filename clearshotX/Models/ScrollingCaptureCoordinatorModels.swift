@@ -5,8 +5,14 @@
 
 import Foundation
 
+enum ScrollingCaptureMode: Equatable {
+    case manual
+    case automatic
+}
+
 enum ScrollingCaptureHUDPhase: Equatable {
     case starting
+    case ready
     case capturing
     case guidance
     case paused
@@ -19,21 +25,32 @@ struct ScrollingCaptureHUDState: Equatable {
     var rejectedFrameCount: Int
     var outputPixelWidth: Int
     var outputPixelHeight: Int
+    var mode: ScrollingCaptureMode?
 
     static let starting = ScrollingCaptureHUDState(
         phase: .starting,
         acceptedFrameCount: 0,
         rejectedFrameCount: 0,
         outputPixelWidth: 0,
-        outputPixelHeight: 0
+        outputPixelHeight: 0,
+        mode: nil
     )
 
     var title: String {
         switch phase {
         case .starting:
             "Preparing scrolling capture…"
+        case .ready:
+            "Choose scrolling mode"
         case .capturing:
-            acceptedFrameCount <= 1 ? "Auto-scrolling page" : "Capturing page"
+            switch mode {
+            case .manual:
+                acceptedFrameCount <= 1 ? "Manual scrolling capture" : "Capturing scroll"
+            case .automatic:
+                acceptedFrameCount <= 1 ? "Auto-scrolling page" : "Capturing page"
+            case nil:
+                "Capturing page"
+            }
         case .guidance:
             "Scroll a little slower"
         case .paused:
@@ -47,12 +64,28 @@ struct ScrollingCaptureHUDState: Equatable {
         switch phase {
         case .starting:
             "Connecting to the selected area"
+        case .ready:
+            "Scroll yourself, or let ClearshotX drive the page after you choose Auto Scroll."
         case .capturing:
-            "ClearshotX is scrolling and capturing each settled page step."
+            switch mode {
+            case .manual:
+                "Scroll naturally inside the selected area. ClearshotX will capture settled movement."
+            case .automatic:
+                "ClearshotX is scrolling and capturing each settled page step."
+            case nil:
+                "Capturing each settled page step."
+            }
         case .guidance:
             "Retrying this area with a smaller automatic scroll step."
         case .paused:
-            "Resume to continue automatic scrolling from this position."
+            switch mode {
+            case .manual:
+                "Resume when you are ready to keep capturing manual scroll movement."
+            case .automatic:
+                "Resume to continue automatic scrolling from this position."
+            case nil:
+                "Resume to continue capturing."
+            }
         case .finishing:
             "Assembling and saving the accepted pixels"
         }
@@ -65,6 +98,14 @@ struct ScrollingCaptureHUDState: Equatable {
 
     var canFinish: Bool {
         acceptedFrameCount > 0 && phase != .finishing
+    }
+
+    var canStartAutoScroll: Bool {
+        phase == .ready
+    }
+
+    var canStartManualScroll: Bool {
+        phase == .ready
     }
 
     var canPause: Bool {
@@ -123,7 +164,8 @@ private extension ScrollingCaptureHUDState {
             acceptedFrameCount: progress.acceptedFrameCount,
             rejectedFrameCount: progress.rejectedFrameCount,
             outputPixelWidth: progress.outputPixelWidth,
-            outputPixelHeight: progress.outputPixelHeight
+            outputPixelHeight: progress.outputPixelHeight,
+            mode: mode
         )
     }
 }

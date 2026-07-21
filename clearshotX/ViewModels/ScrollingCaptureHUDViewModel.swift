@@ -14,17 +14,23 @@ final class ScrollingCaptureHUDViewModel: ObservableObject {
     private let finishHandler: () -> Void
     private let cancelHandler: () -> Void
     private let pauseHandler: () -> Void
+    private let startAutoScrollHandler: () -> Void
+    private let startManualScrollHandler: () -> Void
     private var pendingState: ScrollingCaptureHUDState?
     private var statePublicationTask: Task<Void, Never>?
 
     init(
         finish: @escaping () -> Void,
         cancel: @escaping () -> Void,
-        togglePause: @escaping () -> Void
+        togglePause: @escaping () -> Void,
+        startAutoScroll: @escaping () -> Void,
+        startManualScroll: @escaping () -> Void
     ) {
         finishHandler = finish
         cancelHandler = cancel
         pauseHandler = togglePause
+        startAutoScrollHandler = startAutoScroll
+        startManualScrollHandler = startManualScroll
     }
 
     func update(_ state: ScrollingCaptureHUDState) {
@@ -74,5 +80,15 @@ final class ScrollingCaptureHUDViewModel: ObservableObject {
     func togglePause() {
         guard state.canPause else { return }
         pauseHandler()
+    }
+
+    func startAutoScroll() {
+        guard state.canStartAutoScroll else { return }
+        startAutoScrollHandler()
+    }
+
+    func startManualScroll() {
+        guard state.canStartManualScroll else { return }
+        startManualScrollHandler()
     }
 }

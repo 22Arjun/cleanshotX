@@ -22,7 +22,7 @@ protocol ScrollingCaptureHUDPresenting: AnyObject {
 @MainActor
 final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
     private let previewMaximumSize = NSSize(width: 232, height: 420)
-    private let controlsSize = NSSize(width: 276, height: 54)
+    private let controlsSize = NSSize(width: 328, height: 54)
     private let edgeMargin: CGFloat = 12
 
     private var frameWindows: [ScrollingCaptureFrameWindow] = []
