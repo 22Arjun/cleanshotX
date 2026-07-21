@@ -4,7 +4,6 @@
 //
 
 import AppKit
-import CoreImage
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -34,7 +33,6 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
         qos: .userInitiated
     )
     private let stateLock = NSLock()
-    private let imageContext = CIContext(options: [.cacheIntermediates: false])
 
     private var stream: SCStream?
     private var geometry: ScrollingCaptureRegionGeometry?
@@ -156,7 +154,7 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
     private func process(_ queuedFrame: QueuedFrame) {
         // LatestValueProcessor deliberately drains continuously while frames keep
         // arriving. Give every frame its own autorelease boundary so temporary
-        // Core Image/Core Media wrappers cannot accumulate for the entire scroll.
+        // Core Graphics/Core Media wrappers cannot accumulate for the entire scroll.
         autoreleasepool {
             processWithinAutoreleasePool(queuedFrame)
         }
@@ -189,8 +187,7 @@ nonisolated final class ScrollingCaptureFrameSource: NSObject,
             return
         }
 
-        let image = CIImage(cvPixelBuffer: pixelBuffer)
-        guard let cgImage = imageContext.createCGImage(image, from: image.extent) else {
+        guard let cgImage = ScrollingCaptureFrameImaging.makeCGImage(from: pixelBuffer) else {
             return
         }
 
@@ -335,5 +332,43 @@ private nonisolated extension CMSampleBuffer {
             return nil
         }
         return attachments.first
+    }
+}
+
+/// Converts a packed 32-bit BGRA `CVPixelBuffer` straight into a `CGImage`.
+/// `SCStream` delivers exactly this pixel format, so a `CGContext` snapshot over
+/// the buffer's native bytes is a plain memory copy with no Core Image filter
+/// graph, color-management pass, or GPU round trip. That matters here because
+/// this conversion runs on every frame the mailbox admits, in line with
+/// registration, so its cost directly bounds how fast manual scrolling can be
+/// analyzed and reflected in the live HUD preview.
+nonisolated enum ScrollingCaptureFrameImaging {
+    private static let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+        ?? CGColorSpaceCreateDeviceRGB()
+    // Native-order BGRA with the alpha byte ignored. Callers only ever hand this
+    // opaque, display-composited frames, so dropping the alpha byte loses nothing.
+    private static let bitmapInfo = CGImageAlphaInfo.noneSkipFirst.rawValue
+        | CGBitmapInfo.byteOrder32Little.rawValue
+
+    static func makeCGImage(from pixelBuffer: CVPixelBuffer) -> CGImage? {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            return nil
+        }
+        let context = CGContext(
+            data: baseAddress,
+            width: CVPixelBufferGetWidth(pixelBuffer),
+            height: CVPixelBufferGetHeight(pixelBuffer),
+            bitsPerComponent: 8,
+            bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        )
+        // `makeImage()` snapshots the bitmap while the buffer is still locked, so
+        // the returned CGImage stays valid after this function unlocks and the
+        // pixel buffer is returned to ScreenCaptureKit's pool.
+        return context?.makeImage()
     }
 }

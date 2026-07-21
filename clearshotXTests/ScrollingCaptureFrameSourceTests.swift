@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreVideo
 import ScreenCaptureKit
 import XCTest
 
@@ -101,6 +102,85 @@ final class ScrollingCaptureFrameGateTests: XCTestCase {
                 expectedHeight: 400
             )
         )
+    }
+}
+
+final class ScrollingCaptureFrameImagingTests: XCTestCase {
+    func testConvertsBGRAPixelBufferPreservingChannelOrderAndValues() throws {
+        let width = 2
+        let height = 2
+        var unmanagedBuffer: CVPixelBuffer?
+        let attributes: [CFString: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey: true,
+        ]
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            attributes as CFDictionary,
+            &unmanagedBuffer
+        )
+        XCTAssertEqual(status, kCVReturnSuccess)
+        let pixelBuffer = try XCTUnwrap(unmanagedBuffer)
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let base = try XCTUnwrap(CVPixelBufferGetBaseAddress(pixelBuffer))
+            .assumingMemoryBound(to: UInt8.self)
+        // In-memory byte order for kCVPixelFormatType_32BGRA is B, G, R, A.
+        setBGRAPixel(base, row: 0, column: 0, bytesPerRow: bytesPerRow, b: 10, g: 20, r: 200)
+        setBGRAPixel(base, row: 0, column: 1, bytesPerRow: bytesPerRow, b: 250, g: 5, r: 1)
+        setBGRAPixel(base, row: 1, column: 0, bytesPerRow: bytesPerRow, b: 0, g: 0, r: 0)
+        setBGRAPixel(base, row: 1, column: 1, bytesPerRow: bytesPerRow, b: 200, g: 150, r: 100)
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+
+        let image = try XCTUnwrap(ScrollingCaptureFrameImaging.makeCGImage(from: pixelBuffer))
+        XCTAssertEqual(image.width, width)
+        XCTAssertEqual(image.height, height)
+
+        let rgba = try rgbaPixels(image)
+        XCTAssertEqual(rgba[0], [200, 20, 10, 255], "top-left should read back as R,G,B,A")
+        XCTAssertEqual(rgba[1], [1, 5, 250, 255], "top-right should read back as R,G,B,A")
+        XCTAssertEqual(rgba[2], [0, 0, 0, 255], "bottom-left should read back as R,G,B,A")
+        XCTAssertEqual(rgba[3], [100, 150, 200, 255], "bottom-right should read back as R,G,B,A")
+    }
+
+    private func setBGRAPixel(
+        _ base: UnsafeMutablePointer<UInt8>,
+        row: Int,
+        column: Int,
+        bytesPerRow: Int,
+        b: UInt8,
+        g: UInt8,
+        r: UInt8,
+        a: UInt8 = 255
+    ) {
+        let offset = row * bytesPerRow + column * 4
+        base[offset] = b
+        base[offset + 1] = g
+        base[offset + 2] = r
+        base[offset + 3] = a
+    }
+
+    private func rgbaPixels(_ image: CGImage) throws -> [[UInt8]] {
+        var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let context = try XCTUnwrap(
+            bytes.withUnsafeMutableBytes { buffer in
+                CGContext(
+                    data: buffer.baseAddress,
+                    width: image.width,
+                    height: image.height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: image.width * 4,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                )
+            }
+        )
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return stride(from: 0, to: bytes.count, by: 4).map { Array(bytes[$0..<$0 + 4]) }
     }
 }
 
