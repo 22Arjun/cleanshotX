@@ -131,6 +131,98 @@ nonisolated final class ScrollingCaptureDiscreteFrameSource:
     }
 }
 
+/// Satisfies the discrete "capture on demand" contract using the same persistent,
+/// low-latency `SCStream` that manual capture streams from, instead of requesting
+/// a brand-new `SCScreenshotManager` screenshot for every step.
+///
+/// `SCScreenshotManager.captureImage` re-establishes capture state on every call,
+/// which is appropriate for an occasional single screenshot but adds real,
+/// avoidable round-trip latency when it runs once per scroll step, repeatedly,
+/// for the whole capture. A continuous stream amortizes that setup cost once and
+/// keeps a frame ready essentially all the time.
+///
+/// `captureFrame()` still returns only a frame strictly newer than the one it
+/// last handed back, which preserves the same correctness property the discrete
+/// contract documents: a synthetic scroll step is never registered against a
+/// stale, pre-scroll frame.
+nonisolated final class ScrollingCaptureContinuousDiscreteFrameSource:
+    ScrollingCaptureDiscreteFrameSourcing,
+    @unchecked Sendable
+{
+    private let continuousSource: ScrollingCaptureFrameSourcing
+    private let pollInterval: Duration
+    private let acquisitionTimeout: Duration
+
+    private let lock = NSLock()
+    private var latestFrame: CGImage?
+    private var latestSequence: UInt64 = 0
+    private var lastReturnedSequence: UInt64 = 0
+
+    init(
+        continuousSource: ScrollingCaptureFrameSourcing = ScrollingCaptureFrameSource(),
+        pollInterval: Duration = .milliseconds(3),
+        acquisitionTimeout: Duration = .milliseconds(750)
+    ) {
+        self.continuousSource = continuousSource
+        self.pollInterval = pollInterval
+        self.acquisitionTimeout = acquisitionTimeout
+    }
+
+    func prepare(selectedRegion: CGRect) async throws -> ScrollingCaptureRegionGeometry {
+        try await continuousSource.start(
+            selectedRegion: selectedRegion,
+            onFrame: { [weak self] frame in self?.store(frame.image) },
+            onFailure: { _ in
+                // A mid-capture stream failure surfaces through the next
+                // captureFrame() timeout instead of a separate error path, so
+                // the auto-capture loop's existing failure handling still applies.
+            }
+        )
+    }
+
+    func captureFrame() async throws -> CGImage {
+        let deadline = ContinuousClock.now.advanced(by: acquisitionTimeout)
+        while true {
+            // The baseline is whatever this caller last consumed, not whatever
+            // happened to be buffered the instant this call started: a frame that
+            // arrived while the caller was still sleeping (e.g. mid-settle-delay)
+            // is legitimately fresh and must be returned immediately, not awaited
+            // past again.
+            if let frame = takeFreshFrame() {
+                return frame
+            }
+            guard ContinuousClock.now < deadline else {
+                throw ScrollingCaptureAutoCaptureError.frameAcquisitionTimedOut
+            }
+            try await Task.sleep(for: pollInterval)
+        }
+    }
+
+    func stop() async {
+        try? await continuousSource.stop()
+        lock.lock()
+        latestFrame = nil
+        latestSequence = 0
+        lastReturnedSequence = 0
+        lock.unlock()
+    }
+
+    private func store(_ image: CGImage) {
+        lock.lock()
+        latestFrame = image
+        latestSequence &+= 1
+        lock.unlock()
+    }
+
+    private func takeFreshFrame() -> CGImage? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let latestFrame, latestSequence > lastReturnedSequence else { return nil }
+        lastReturnedSequence = latestSequence
+        return latestFrame
+    }
+}
+
 /// Posts continuous pixel-wheel events at the selection center. CGEvent uses a
 /// top-left desktop origin while AppKit selection geometry uses bottom-left.
 nonisolated final class ScrollingCaptureCGEventScrollDriver:

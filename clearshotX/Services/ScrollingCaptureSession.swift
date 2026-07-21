@@ -389,6 +389,14 @@ private nonisolated final class ScrollingCaptureContinuityValidator {
         )
         guard minimumOffset <= maximumOffset else { return nil }
 
+        // This full-range sweep is the most expensive step in the whole capture
+        // pipeline: every offset in a range that can span hundreds of rows is
+        // evaluated so a genuinely unrelated, similarly-good offset elsewhere can
+        // still be detected (the uniqueness gate below), and so a real minimum
+        // one row off from a coarser sample is never missed on Retina content.
+        // An offset stride was tried here to bound the sweep's cost and caused
+        // `testTallRetinaViewportRefinesEverySeamAtNativeRowResolution` to miss
+        // the true offset — the buffer-pointer speedup below is the safe win.
         var sparseScores: [OffsetScore] = []
         sparseScores.reserveCapacity(maximumOffset - minimumOffset + 1)
         for offset in minimumOffset...maximumOffset {
@@ -687,22 +695,33 @@ private nonisolated final class ScrollingCaptureContinuityValidator {
         let endColumn = max(edgeInset + 1, previous.width - edgeInset)
         let rowStride = max(4, rowCount / 180)
         let columnStride = max(3, (endColumn - edgeInset) / 48)
+        let previousWidth = previous.width
+        let currentWidth = current.width
+
         var total = 0
         var samples = 0
-        var row = 0
-        while row < rowCount {
-            let previousBase = (previousStart + row) * previous.width
-            let currentBase = (currentStart + row) * current.width
-            var column = edgeInset
-            while column < endColumn {
-                total += abs(
-                    Int(previous.pixels[previousBase + column])
-                        - Int(current.pixels[currentBase + column])
-                )
-                samples += 1
-                column += columnStride
+        // This is the hottest loop in the whole capture pipeline: it runs for
+        // every offset in a full-range recovery sweep. Unsafe buffer pointers
+        // remove Array's bounds-check and uniqueness-check overhead per access
+        // without changing a single computed value.
+        previous.pixels.withUnsafeBufferPointer { previousPixels in
+            current.pixels.withUnsafeBufferPointer { currentPixels in
+                var row = 0
+                while row < rowCount {
+                    let previousBase = (previousStart + row) * previousWidth
+                    let currentBase = (currentStart + row) * currentWidth
+                    var column = edgeInset
+                    while column < endColumn {
+                        total += abs(
+                            Int(previousPixels[previousBase + column])
+                                - Int(currentPixels[currentBase + column])
+                        )
+                        samples += 1
+                        column += columnStride
+                    }
+                    row += rowStride
+                }
             }
-            row += rowStride
         }
         guard samples > 0 else { return 1 }
         return Double(total) / Double(samples * 255)
@@ -757,23 +776,29 @@ private nonisolated final class ScrollingCaptureContinuityValidator {
         let startColumn = edgeInset
         let endColumn = max(startColumn + 1, previous.width - edgeInset)
         let rowStride = rowCount > 1_200 ? 2 : 1
+        let previousWidth = previous.width
+        let currentWidth = current.width
 
         var total = 0
         var samples = 0
-        var row = 0
-        while row < rowCount {
-            let previousBase = (previousStart + row) * previous.width
-            let currentBase = (currentStart + row) * current.width
-            var column = startColumn
-            while column < endColumn {
-                total += abs(
-                    Int(previous.pixels[previousBase + column])
-                        - Int(current.pixels[currentBase + column])
-                )
-                samples += 1
-                column += 1
+        previous.pixels.withUnsafeBufferPointer { previousPixels in
+            current.pixels.withUnsafeBufferPointer { currentPixels in
+                var row = 0
+                while row < rowCount {
+                    let previousBase = (previousStart + row) * previousWidth
+                    let currentBase = (currentStart + row) * currentWidth
+                    var column = startColumn
+                    while column < endColumn {
+                        total += abs(
+                            Int(previousPixels[previousBase + column])
+                                - Int(currentPixels[currentBase + column])
+                        )
+                        samples += 1
+                        column += 1
+                    }
+                    row += rowStride
+                }
             }
-            row += rowStride
         }
         guard samples > 0 else { return 1 }
         return Double(total) / Double(samples * 255)

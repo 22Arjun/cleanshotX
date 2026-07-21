@@ -43,6 +43,10 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
         let previewSize = NSSize(width: 1, height: 1)
         let previewPanel = makePanel(contentSize: previewSize)
         previewPanel.ignoresMouseEvents = true
+        // Unlike the other borderless panels, the page miniature reads as a
+        // floating card (white background, rounded corners) rather than raw
+        // pixels pasted on the desktop, so it earns a real window shadow.
+        previewPanel.hasShadow = true
         let previewView = ScrollingCapturePreviewImageView(frame: .zero)
         previewView.frame = NSRect(origin: .zero, size: previewSize)
         previewView.autoresizingMask = [.width, .height]
@@ -273,14 +277,21 @@ final class ScrollingCaptureHUDManager: ScrollingCaptureHUDPresenting {
 /// avoids a SwiftUI layout/diff pass for every accepted strip and presents the new
 /// miniature with one Core Animation contents swap.
 private final class ScrollingCapturePreviewImageView: NSView {
+    private static let cornerRadius: CGFloat = 9
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.clear.cgColor
+        // A plain white card with rounded corners and a hairline border reads as
+        // a floating miniature rather than raw pixels pasted on the desktop.
+        layer?.backgroundColor = NSColor.white.cgColor
         layer?.contentsGravity = .resizeAspect
         layer?.minificationFilter = .linear
         layer?.magnificationFilter = .linear
-        layer?.masksToBounds = false
+        layer?.masksToBounds = true
+        layer?.cornerRadius = Self.cornerRadius
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.black.withAlphaComponent(0.10).cgColor
     }
 
     @available(*, unavailable)

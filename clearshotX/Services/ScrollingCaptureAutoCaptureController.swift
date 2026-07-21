@@ -26,6 +26,7 @@ nonisolated enum ScrollingCaptureAutoCaptureError: LocalizedError, Equatable {
     case postEventPermissionDenied
     case unreliableAlignment
     case invalidScrollRegion
+    case frameAcquisitionTimedOut
 
     var errorDescription: String? {
         switch self {
@@ -41,6 +42,8 @@ nonisolated enum ScrollingCaptureAutoCaptureError: LocalizedError, Equatable {
             "The page could not be aligned reliably, so capture stopped before making a broken seam."
         case .invalidScrollRegion:
             "The selected region is too small for automatic scrolling capture."
+        case .frameAcquisitionTimedOut:
+            "ClearshotX did not receive a new frame from the selected area in time."
         }
     }
 
@@ -50,6 +53,8 @@ nonisolated enum ScrollingCaptureAutoCaptureError: LocalizedError, Equatable {
             "Keep the page unobstructed and try a slightly taller region."
         case .postEventPermissionDenied:
             "Allow ClearshotX in System Settings › Privacy & Security › Accessibility, then try again."
+        case .frameAcquisitionTimedOut:
+            "Keep the selected area visible on screen, then try again."
         default:
             "Select the scrolling region again and retry."
         }
@@ -102,7 +107,8 @@ nonisolated final class ScrollingCaptureAutoCaptureController:
     private var captureTask: Task<Void, Never>?
 
     init(
-        frameSource: ScrollingCaptureDiscreteFrameSourcing = ScrollingCaptureDiscreteFrameSource(),
+        frameSource: ScrollingCaptureDiscreteFrameSourcing =
+            ScrollingCaptureContinuousDiscreteFrameSource(),
         scrollDriver: ScrollingCaptureScrollDriving = ScrollingCaptureCGEventScrollDriver(),
         stitchEngine: ScrollingCaptureStitchEngine = ScrollingCaptureStitchEngine(),
         captureConfiguration: ScrollingCaptureConfiguration = .init(),

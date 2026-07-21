@@ -424,6 +424,77 @@ final class ScrollingCaptureCoordinatorTests: XCTestCase {
     }
 }
 
+final class ScrollingCaptureContinuousDiscreteFrameSourceTests: XCTestCase {
+    func testCaptureFrameNeverReturnsAFrameAlreadyHandedToAnEarlierCall() async throws {
+        let source = FakeScrollingFrameSource()
+        let adapter = ScrollingCaptureContinuousDiscreteFrameSource(
+            continuousSource: source,
+            pollInterval: .milliseconds(1),
+            acquisitionTimeout: .milliseconds(500)
+        )
+        _ = try await adapter.prepare(
+            selectedRegion: CGRect(x: 0, y: 0, width: 4, height: 3)
+        )
+
+        let first = makeSolidImage(width: 4, height: 3)
+        source.emit(image: first)
+        let capturedFirst = try await adapter.captureFrame()
+        XCTAssertTrue(capturedFirst === first)
+
+        // No newer frame exists yet; the call must wait rather than replay `first`.
+        let waitTask = Task { try await adapter.captureFrame() }
+        try await Task.sleep(for: .milliseconds(30))
+
+        let second = makeSolidImage(width: 4, height: 3)
+        source.emit(image: second)
+        let capturedSecond = try await waitTask.value
+        XCTAssertTrue(capturedSecond === second)
+        XCTAssertFalse(capturedSecond === first)
+    }
+
+    func testCaptureFrameTimesOutWhenNoFrameEverArrives() async throws {
+        let source = FakeScrollingFrameSource()
+        let adapter = ScrollingCaptureContinuousDiscreteFrameSource(
+            continuousSource: source,
+            pollInterval: .milliseconds(1),
+            acquisitionTimeout: .milliseconds(20)
+        )
+        _ = try await adapter.prepare(
+            selectedRegion: CGRect(x: 0, y: 0, width: 4, height: 3)
+        )
+
+        do {
+            _ = try await adapter.captureFrame()
+            XCTFail("Expected a frame acquisition timeout error")
+        } catch let error as ScrollingCaptureAutoCaptureError {
+            XCTAssertEqual(error, .frameAcquisitionTimedOut)
+        }
+    }
+
+    func testStopClearsBufferedFrameSoALaterPrepareStartsFresh() async throws {
+        let source = FakeScrollingFrameSource()
+        let adapter = ScrollingCaptureContinuousDiscreteFrameSource(
+            continuousSource: source,
+            pollInterval: .milliseconds(1),
+            acquisitionTimeout: .milliseconds(20)
+        )
+        _ = try await adapter.prepare(
+            selectedRegion: CGRect(x: 0, y: 0, width: 4, height: 3)
+        )
+        source.emit(image: makeSolidImage(width: 4, height: 3))
+        _ = try await adapter.captureFrame()
+
+        await adapter.stop()
+
+        do {
+            _ = try await adapter.captureFrame()
+            XCTFail("Expected a timeout after stop() cleared buffered state")
+        } catch let error as ScrollingCaptureAutoCaptureError {
+            XCTAssertEqual(error, .frameAcquisitionTimedOut)
+        }
+    }
+}
+
 private nonisolated final class FakeScrollingFrameSource:
     ScrollingCaptureFrameSourcing,
     @unchecked Sendable
